@@ -1,0 +1,13 @@
+node_modules/
+dist/
+coverage/
+pnpm-lock.yaml
+*.tsbuildinfo
+
+# CLAUDE.md is the source of truth and must stay byte-identical to the
+# committed spec — Prettier must never rewrite it.
+CLAUDE.md
+
+# Documentation is hand-formatted (tables, ASCII diagrams, deliberate wrapping).
+# Prettier's Markdown printer would reflow it and damage the diagrams.
+*.md

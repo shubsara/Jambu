@@ -1,0 +1,23 @@
+# dependencies
+node_modules/
+.pnpm-store/
+
+# build output
+dist/
+build/
+*.tsbuildinfo
+
+# environment / secrets — never commit (CLAUDE.md §31)
+.env
+.env.*
+!.env.example
+
+# test / coverage
+coverage/
+.vitest/
+
+# editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.log

@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "./packages/shared-types" },
+    { "path": "./packages/message-templates" },
+    { "path": "./packages/care-engine" },
+    { "path": "./packages/routine-learning" }
+  ]
+}
