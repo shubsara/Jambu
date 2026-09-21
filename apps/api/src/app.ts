@@ -14,6 +14,7 @@ import { createSupabaseClients, type SupabaseClients } from './plugins/supabase.
 import { buildAuthenticate } from './auth/authenticate.js';
 import { registerActivityRoutes } from './routes/activity/session.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerInterventionRoutes } from './routes/interventions/index.js';
 import { registerUserStateRoutes } from './routes/user/state.js';
 import { registerHealthRoute } from './routes/health.js';
 
@@ -140,6 +141,14 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   registerActivityRoutes(app, clients, {
     maxRequestsPerMinute: config.activityRateLimitMax,
+    authenticate: buildAuthenticate(clients),
+    expiryMinutes: config.interventionExpiryMinutes,
+  });
+
+  registerInterventionRoutes(app, clients, {
+    maxRequestsPerMinute: config.activityRateLimitMax,
+    expiryMinutes: config.interventionExpiryMinutes,
+    snoozeMinutes: config.interventionSnoozeMinutes,
     authenticate: buildAuthenticate(clients),
   });
 
