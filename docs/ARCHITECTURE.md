@@ -211,6 +211,34 @@ Inputs (`CareContext`) and outputs (`CareDecision`) are exactly as specified in
 `CLAUDE.md` §13. The engine decides **whether** to intervene; it never decides
 wording (§8).
 
+### 7.1.1 `CareContext` — approved extension (P1)
+
+`CLAUDE.md` §13 presents an *example* interface. It has no way to express
+several rules the approved decisions require, and because the engine is pure
+(§3) anything it must know has to arrive as an input. The following fields were
+added and **approved after P1**:
+
+| Field | Required by |
+|---|---|
+| `isPaused`, `pausedUntil` | §14 "User paused Jambu −100"; D5 |
+| `snoozedUntilByType` | §14 "Recent snooze −20"; §17; D5 per-type scoping |
+| `lastDismissalByType` | §14 "Recent dismissal −25" |
+| `consecutiveDismissalsByType` | §17 "reduce frequency after repeated dismissals" |
+| `lastHydrationConfirmation` | D7 "no recent hydration confirmation" |
+| `workHours` | D7 end-of-day fires after the *learned* work-end, not the onboarding preference |
+
+`UserState.lunchWindow.source` (`'default' | 'learned'`) is approved alongside
+these, so the D8 fallback window can never be mistaken for a learned pattern.
+The dedicated time primitives in `packages/shared-types/src/time.ts` —
+`IsoTimestamp`, `TimeOfDay`, `IanaTimeZone` — are approved for the same reason:
+they keep UTC instants and local wall-clock times from being confused.
+
+The standing requirement is unchanged and absolute: **the Care Engine must not
+touch the database, the clock, browser APIs, the network, the filesystem,
+randomness, or persona state.** Every one of those arrives through
+`CareContext`, and the ESLint rules in §3 fail the build if the engine reaches
+for any of them directly.
+
 ### 7.2 Scoring (§14)
 
 Weights live in one editable config object, `packages/care-engine/src/config/scoring.ts`:
@@ -465,8 +493,16 @@ end_time     TIME,
 confidence   DECIMAL(3,2) NOT NULL DEFAULT 0 CHECK (confidence BETWEEN 0 AND 1),
 sample_count INTEGER NOT NULL DEFAULT 0,
 updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-UNIQUE (user_id, pattern_type, day_of_week)
+-- Decision D13, verified on PostgreSQL 17.6.
+UNIQUE NULLS NOT DISTINCT (user_id, pattern_type, day_of_week)
 ```
+
+`NULLS NOT DISTINCT` is load-bearing, not cosmetic. `day_of_week IS NULL`
+means "all days", and under Postgres' default `NULLS DISTINCT` this constraint
+would permit unlimited duplicate all-day rows for the same pattern type —
+exactly the case it exists to prevent. It requires PostgreSQL 15 or newer; the
+local Supabase stack provides **17.6**, so the partial-index fallback offered
+under D13 is not needed and was not used.
 
 ### 11.5 `interventions`
 
@@ -546,12 +582,18 @@ Per §22 ("do not create excessive indexes without evidence"):
 CREATE INDEX ON activity_sessions (user_id, started_at DESC);
 CREATE INDEX ON interventions     (user_id, shown_at DESC);
 CREATE INDEX ON interventions     (user_id, type, created_at DESC);
-CREATE INDEX ON routine_patterns  (user_id, pattern_type, day_of_week);
-CREATE INDEX ON intervention_snoozes (user_id, type);
 ```
 
 Primary keys and unique constraints supply the rest. Nothing further is added
 without a measured query to justify it.
+
+Two index paths this section previously listed as separate statements —
+`routine_patterns (user_id, pattern_type, day_of_week)` and
+`intervention_snoozes (user_id, type)` — **already exist**, created
+automatically by the unique constraints on those tables. Declaring them again
+would build a second identical B-tree on the same columns for no benefit, which
+§22 forbids. The index paths are unchanged; only the statement that creates
+them is.
 
 ### 11.10 RLS
 
