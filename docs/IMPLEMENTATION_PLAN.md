@@ -369,6 +369,14 @@ expiry sweep sets `expired` (§18); overlapping types never both created.
 service worker restores state after termination; **manifest permission
 snapshot test** fails the build if permissions widen (D3).
 
+**Consideration carried forward from P3 — registration without a session.**
+Supabase may return a created user and **no session** when email confirmation
+is enabled. `POST /api/auth/register` then responds `201` with `{ user }` and
+no tokens. That is correct behaviour and not a contract change, so `API.md` was
+deliberately left untouched — but the extension client must handle it
+explicitly: treat the account as created and route the user to sign-in rather
+than assuming tokens are always present.
+
 **Acceptance criteria.**
 - Loads unpacked; user can log in and see their email.
 - **No Supabase key of any kind in the bundle** — build-time grep for
