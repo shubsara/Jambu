@@ -12,9 +12,11 @@ import { ApiError } from '../../errors.js';
 import type { SupabaseClients } from '../../plugins/supabase.js';
 import { activityBatchSchema } from '../../schemas/activity.js';
 import { ingestSessions } from '../../services/activity.js';
+import { createIfWarranted } from '../../services/intervention.js';
 
 export interface ActivityRouteOptions {
   readonly maxRequestsPerMinute: number;
+  readonly expiryMinutes: number;
   /** Runs before the rate limiter, so the limit can be keyed by user. */
   readonly authenticate: onRequestHookHandler;
 }
@@ -54,12 +56,36 @@ export function registerActivityRoutes(
 
       const result = await ingestSessions(clients.admin, userId, parsed.data.sessions);
 
+      // Decision D4: the decision rides back on the ingest response, so the
+      // common case needs no poll.
+      //
+      // Decision D49: activity ingestion is authoritative and already
+      // committed. Everything below is a best-effort side effect — a failure
+      // here must not make the extension retry a batch we accepted, because
+      // that would trade a missed nudge for duplicated activity.
+      let pendingInterventions: unknown[] = [];
+      try {
+        const outcome = await createIfWarranted(clients.admin, userId, new Date(), {
+          expiryMinutes: options.expiryMinutes,
+          trigger: 'activity_sync',
+        });
+        if (outcome.status === 'created' || outcome.status === 'existing') {
+          pendingInterventions = [outcome.intervention];
+        }
+      } catch (cause) {
+        // Structured, and deliberately narrow: no domains, URLs, page content,
+        // tokens, or rendered message text (CLAUDE.md §9, §31).
+        request.log.error(
+          { event: 'intervention_decision_failed', stage: 'activity_sync' },
+          'intervention decision failed after activity was accepted',
+        );
+        void cause;
+      }
+
       return await reply.code(200).send({
         accepted: result.accepted,
         duplicates: result.duplicates,
-        // Decision D21: a stable contract field, populated once the Care
-        // Engine (P6) and intervention lifecycle (P7) exist.
-        pendingInterventions: [],
+        pendingInterventions,
       });
     },
   );
