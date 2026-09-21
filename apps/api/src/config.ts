@@ -49,6 +49,17 @@ const envSchema = z.object({
    * legitimately, and reusing the auth budget would break normal operation.
    */
   ACTIVITY_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
+
+  /** Decision D50 — how long a care card stays answerable. */
+  INTERVENTION_EXPIRY_MINUTES: z.coerce.number().int().positive().default(30),
+
+  /**
+   * How long a "remind me later" silences that intervention type.
+   *
+   * NOT specified by CLAUDE.md or any approved decision — surfaced as D51 and
+   * centralised here so it can be changed deliberately once ruled on.
+   */
+  INTERVENTION_SNOOZE_MINUTES: z.coerce.number().int().positive().default(30),
 });
 
 export interface AppConfig {
@@ -61,6 +72,8 @@ export interface AppConfig {
   readonly allowedOrigins: readonly string[];
   readonly authRateLimitMax: number;
   readonly activityRateLimitMax: number;
+  readonly interventionExpiryMinutes: number;
+  readonly interventionSnoozeMinutes: number;
   readonly version: string;
 }
 
@@ -88,6 +101,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     allowedOrigins: parseAllowedOrigins(value.CORS_ALLOWED_ORIGINS),
     authRateLimitMax: value.AUTH_RATE_LIMIT_MAX,
     activityRateLimitMax: value.ACTIVITY_RATE_LIMIT_MAX,
+    interventionExpiryMinutes: value.INTERVENTION_EXPIRY_MINUTES,
+    interventionSnoozeMinutes: value.INTERVENTION_SNOOZE_MINUTES,
     version: env['npm_package_version'] ?? '0.0.0',
   };
 }

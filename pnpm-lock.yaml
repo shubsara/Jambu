@@ -211,6 +211,12 @@ importers:
       '@fastify/rate-limit':
         specifier: ^11.2.0
         version: 11.2.0
+      '@jambu/care-engine':
+        specifier: workspace:*
+        version: link:../../packages/care-engine
+      '@jambu/message-templates':
+        specifier: workspace:*
+        version: link:../../packages/message-templates
       '@jambu/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types

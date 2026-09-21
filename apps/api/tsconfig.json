@@ -8,5 +8,15 @@
   },
   "include": ["src/**/*.ts"],
   "exclude": ["src/**/*.test.ts", "dist"],
-  "references": [{ "path": "../../packages/shared-types" }]
+  "references": [
+    {
+      "path": "../../packages/shared-types"
+    },
+    {
+      "path": "../../packages/care-engine"
+    },
+    {
+      "path": "../../packages/message-templates"
+    }
+  ]
 }
