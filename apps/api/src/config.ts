@@ -42,6 +42,13 @@ const envSchema = z.object({
 
   /** Requests per minute per IP on the auth routes. */
   AUTH_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(10),
+
+  /**
+   * Requests per minute per user on activity ingest (decision D24).
+   * Deliberately separate from the auth limit: the extension syncs often and
+   * legitimately, and reusing the auth budget would break normal operation.
+   */
+  ACTIVITY_RATE_LIMIT_MAX: z.coerce.number().int().positive().default(120),
 });
 
 export interface AppConfig {
@@ -53,6 +60,7 @@ export interface AppConfig {
   readonly supabaseServiceRoleKey: string;
   readonly allowedOrigins: readonly string[];
   readonly authRateLimitMax: number;
+  readonly activityRateLimitMax: number;
   readonly version: string;
 }
 
@@ -79,6 +87,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     supabaseServiceRoleKey: value.SUPABASE_SERVICE_ROLE_KEY,
     allowedOrigins: parseAllowedOrigins(value.CORS_ALLOWED_ORIGINS),
     authRateLimitMax: value.AUTH_RATE_LIMIT_MAX,
+    activityRateLimitMax: value.ACTIVITY_RATE_LIMIT_MAX,
     version: env['npm_package_version'] ?? '0.0.0',
   };
 }

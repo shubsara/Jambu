@@ -11,6 +11,8 @@ import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import type { AppConfig } from './config.js';
 import { ApiError } from './errors.js';
 import { createSupabaseClients, type SupabaseClients } from './plugins/supabase.js';
+import { buildAuthenticate } from './auth/authenticate.js';
+import { registerActivityRoutes } from './routes/activity/session.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerHealthRoute } from './routes/health.js';
 
@@ -79,6 +81,10 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   await app.register(rateLimit, {
     max: 100,
     timeWindow: '1 minute',
+    // preHandler rather than the default onRequest: the activity route keys
+    // its limit by authenticated user, and that identity is only established
+    // once its onRequest authentication hook has run (decision D24).
+    hook: 'preHandler',
   });
 
   // --- Error handling (docs/API.md §1.1) ------------------------------------
@@ -130,6 +136,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   // Auth routes carry their own, much tighter budget via per-route config.
   registerAuthRoutes(app, clients, config.authRateLimitMax);
+
+  registerActivityRoutes(app, clients, {
+    maxRequestsPerMinute: config.activityRateLimitMax,
+    authenticate: buildAuthenticate(clients),
+  });
 
   return app;
 }
