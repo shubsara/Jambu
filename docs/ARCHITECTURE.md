@@ -203,6 +203,34 @@ Consequences:
 
 ---
 
+### 6.1 Derived state — decisions settled in P5
+
+These are properties of `GET /api/user/state` and of any later phase that
+reads the same rows. P11 must stay consistent with them unless the data model
+is deliberately changed.
+
+- **Local-midnight attribution.** A session that straddles local midnight is
+  attributed **wholly to the local day it started in**. Splitting it would mean
+  distributing `activeSeconds` across the boundary, which the stored data does
+  not support; no session splitting and no extra persistence was introduced to
+  avoid that.
+- **48-hour read window.** Sessions are read over 48 hours rather than 24. A
+  local day can begin up to 14 hours either side of UTC midnight, and
+  continuity reconstruction needs the sessions immediately preceding the
+  window.
+- **`activeSeconds` is the source of truth for minute totals**, never
+  wall-clock duration. Seconds are summed first and converted once
+  (decision D31).
+- **An invalid stored timezone falls back to UTC** rather than failing the
+  request and leaving the user with no state at all.
+- **Overlapping sessions extend a run**, never shorten it: a session ending
+  later than the run it joins carries the run's end forward.
+- **Derivation is pure.** `services/user-state.ts` takes `now` as an input and
+  must not gain database, clock, network or filesystem dependencies; the reads
+  live in `services/user-state-repository.ts`.
+
+---
+
 ## 7. Care Engine
 
 ### 7.1 Contract
