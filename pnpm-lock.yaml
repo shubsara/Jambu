@@ -196,7 +196,11 @@ importers:
 
   packages/care-engine: {}
 
-  packages/message-templates: {}
+  packages/message-templates:
+    dependencies:
+      '@jambu/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
 
   packages/routine-learning: {}
 
