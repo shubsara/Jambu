@@ -566,6 +566,18 @@ intervention → response → refined timing); the §42 checklist as executable
 assertions; load sanity on activity ingest; **privacy audit test** asserting no
 forbidden §9 field exists in schema or payloads.
 
+**Deferred here by decision: CI database and API integration tests.**
+`pnpm test:db` (P2) and `pnpm test:api` (P3) need a live PostgreSQL and the
+Supabase stack, which CI has no Docker for. They are excluded from `pnpm test`,
+`pnpm verify` and `.github/workflows/ci.yml`, and run only on a developer
+machine with `pnpm db:start`.
+
+The gap this leaves is real and should not be forgotten: CI currently verifies
+types, lint, unit tests and the build, but **not** the schema, RLS policies,
+migration reversibility or the live auth flow. Closing it means adding a
+PostgreSQL service container to the workflow and running both suites against
+it.
+
 **Acceptance criteria.**
 - Every line of §42 demonstrably passes.
 - `pnpm lint && pnpm typecheck && pnpm test && pnpm build` green.
