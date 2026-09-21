@@ -31,6 +31,7 @@ export {
   RULE_THRESHOLDS,
   SCORE_THRESHOLDS,
   SCORING_WEIGHTS,
+  TYPE_PRIORITY,
 } from './config/scoring.js';
 export { perTypeCooldownMinutes, suppressionFor } from './cooldown.js';
 export { scoreFor } from './scoring.js';
