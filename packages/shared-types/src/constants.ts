@@ -45,6 +45,18 @@ export const DEFAULT_LUNCH_WINDOW_CONFIDENCE = 0;
 export const MIN_OBSERVATIONS_FOR_PERSONALIZATION = 3;
 
 /**
+ * Decision D27 — how recently activity must have been seen for the user to
+ * count as `active`.
+ *
+ * This is an explicit MVP classification heuristic tied to the extension's
+ * sync cadence. It is **not** a claim about whether the person is actually at
+ * their desk or working. If the extension's real sync behaviour later makes
+ * this wrong, change it here — deliberately, through the shared contract —
+ * rather than adapting it in one layer.
+ */
+export const ACTIVITY_RECENCY_THRESHOLD_MINUTES = 2;
+
+/**
  * Decision D25 — ingest bounds for `POST /api/activity/session`.
  *
  * Defined here rather than in the API because the extension must respect the
