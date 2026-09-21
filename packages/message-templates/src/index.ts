@@ -1,9 +1,19 @@
 /**
  * @jambu/message-templates
  *
- * Persona registry and deterministic message catalogue.
- *
- * P0 placeholder — this package is scaffolding only. Its real contents land in
- * P1. See docs/IMPLEMENTATION_PLAN.md.
+ * How Jambu says things. Whether Jambu says anything at all is decided by
+ * `@jambu/care-engine`, which never imports this package (CLAUDE.md §8,
+ * decision D10).
  */
-export const PACKAGE_NAME = '@jambu/message-templates' as const;
+
+export type { Persona, PersonaTone } from './persona.js';
+export { MOM_PERSONA } from './personas/mom.js';
+export {
+  PERSONAS,
+  UnknownPersonaError,
+  getMessages,
+  getPersona,
+  isKnownPersona,
+} from './registry.js';
+export type { MessageRequest } from './selector.js';
+export { selectFrom, selectMessage } from './selector.js';
