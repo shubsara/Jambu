@@ -224,7 +224,11 @@ importers:
         specifier: ^4.6.5
         version: 4.6.5
 
-  packages/care-engine: {}
+  packages/care-engine:
+    dependencies:
+      '@jambu/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
 
   packages/message-templates:
     dependencies:
