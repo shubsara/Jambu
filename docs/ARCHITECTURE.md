@@ -373,6 +373,29 @@ highest score wins; ties break by a fixed priority (lunch > end-of-day > break
 > hydration). Cooldowns are enforced **both** in the engine and again in the
 API (P7), because the API is authoritative.
 
+
+### 7.5 Intervention lifecycle constants (P7)
+
+| Constant | Value | Decision |
+|---|---|---|
+| `INTERVENTION_EXPIRY_MINUTES` | **30** | D50 — how long a care card stays answerable |
+| `INTERVENTION_SNOOZE_MINUTES` | **30** | D51 — how long "remind me later" silences that type |
+
+Both live in `apps/api/src/config.ts` and are environment-overridable; neither
+appears as a literal anywhere else.
+
+**Snooze is per intervention type only.** Snoozing lunch must not silence
+breaks, hydration or end-of-day. A `snoozed` response upserts one row in
+`intervention_snoozes` keyed `(user_id, type)`, and that row feeds the existing
+Care Engine suppression path via `CareContext.snoozedUntilByType` — there is no
+separate cooldown mechanism for snoozes, so exactly one place decides when
+Jambu stays quiet.
+
+Expiry is applied lazily at the start of `POST /api/interventions` and
+`GET /api/interventions/today`. It is idempotent: the update matches only
+unanswered rows already past their deadline, so a second sweep changes nothing.
+No scheduler is introduced.
+
 ---
 
 ## 8. Persona Abstraction (D10)

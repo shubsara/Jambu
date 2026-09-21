@@ -54,10 +54,11 @@ const envSchema = z.object({
   INTERVENTION_EXPIRY_MINUTES: z.coerce.number().int().positive().default(30),
 
   /**
-   * How long a "remind me later" silences that intervention type.
+   * Decision D51 — how long a "remind me later" silences that intervention
+   * type. Per type only: snoozing lunch must never silence breaks.
    *
-   * NOT specified by CLAUDE.md or any approved decision — surfaced as D51 and
-   * centralised here so it can be changed deliberately once ruled on.
+   * It feeds the existing P6 suppression path rather than a parallel cooldown
+   * mechanism, so there is one place that decides when Jambu stays quiet.
    */
   INTERVENTION_SNOOZE_MINUTES: z.coerce.number().int().positive().default(30),
 });

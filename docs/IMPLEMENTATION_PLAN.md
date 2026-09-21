@@ -468,6 +468,17 @@ the window less than a defined bound; confidence tiers match §16
 (<3 / 3–7 / 8–14 / 15+); **the 12:30–14:30 default is used below 3
 observations and `source` flips to `"learned"` at the threshold** (D8).
 
+**Handoff from P7 — break-interval encoding is NOT settled.**
+`routine_patterns` has no numeric interval column, so P7 derives a break
+interval from the span between the stored `start_time` and `end_time` of the
+`break_interval` row. That was the only reading available without a migration,
+and nothing exercises it yet because routine learning does not exist.
+
+P11 **must review this encoding explicitly** and decide the real routine-learning
+data model rather than inheriting the P7 reading by default. If a numeric
+interval column is the right answer, that is a P11 migration — P7 deliberately
+did not change the schema.
+
 **Acceptance criteria.**
 - Under 3 observations → generic default, never personalization (§16).
 - Confidence feeds the `+20` historical-pattern term in P6.
