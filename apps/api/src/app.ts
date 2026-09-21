@@ -14,6 +14,7 @@ import { createSupabaseClients, type SupabaseClients } from './plugins/supabase.
 import { buildAuthenticate } from './auth/authenticate.js';
 import { registerActivityRoutes } from './routes/activity/session.js';
 import { registerAuthRoutes } from './routes/auth.js';
+import { registerUserStateRoutes } from './routes/user/state.js';
 import { registerHealthRoute } from './routes/health.js';
 
 /**
@@ -138,6 +139,13 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
   registerAuthRoutes(app, clients, config.authRateLimitMax);
 
   registerActivityRoutes(app, clients, {
+    maxRequestsPerMinute: config.activityRateLimitMax,
+    authenticate: buildAuthenticate(clients),
+  });
+
+  // Decision D29: the state endpoint reuses the activity budget rather than
+  // introducing a third knob.
+  registerUserStateRoutes(app, clients, {
     maxRequestsPerMinute: config.activityRateLimitMax,
     authenticate: buildAuthenticate(clients),
   });
