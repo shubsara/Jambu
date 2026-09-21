@@ -1,9 +1,17 @@
 /**
  * @jambu/shared-types
  *
- * Domain types and API contracts shared by the API and the extension.
- *
- * P0 placeholder — this package is scaffolding only. Its real contents land in
- * P1. See docs/IMPLEMENTATION_PLAN.md.
+ * The domain vocabulary shared by the API and the extension. Business logic
+ * must never be duplicated between them (CLAUDE.md §32); these are the
+ * contracts both sides agree on.
  */
-export const PACKAGE_NAME = '@jambu/shared-types' as const;
+
+export * from './activity.js';
+export * from './care.js';
+export * from './constants.js';
+export * from './intervention.js';
+export * from './pause.js';
+export * from './preferences.js';
+export * from './snooze.js';
+export * from './state.js';
+export * from './time.js';
