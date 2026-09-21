@@ -329,6 +329,43 @@ water?" — never "You are dehydrated" (§40).
 
 Gentle language only; no medical claims.
 
+### 7.3.1 Type-specific scoring signals (decision D41)
+
+CLAUDE.md §14 gives an explicit positive signal only to lunch, which left
+hydration and end-of-day unable to reach the threshold of 70 at all. Two
+weights were added, surfaced and approved before implementation:
+
+| Signal | Weight | Earned when |
+|---|---|---|
+| `hydrationGatePassed` | **+20** | the hydration eligibility gate passes |
+| `endOfDayGatePassed` | **+40** | the end-of-day eligibility gate passes |
+
+They are scoring signals, never standalone triggers: the type's own gate must
+pass first, and every gate already requires sustained activity, so neither can
+turn a clock-only context into an intervention.
+
+The global threshold stays at **70**; there are no per-type thresholds, and the
+`−30` outside-work-hours penalty still applies to end-of-day. Break receives no
+new bonus and reaches the threshold only once a break pattern has been learned
+(P11), which is accepted.
+
+Resulting maxima: **lunch 115 · break 85 (65 before learning) · hydration 85 ·
+end-of-day 75.** End-of-day and hydration do not also earn the
+historical-confidence term; end-of-day's learned work end is what its own +40
+already rewards.
+
+### 7.3.2 Known limitation — "lunch confirmed today" (decision D42)
+
+The engine is pure and has no timezone database (§3, D39), so it cannot compute
+a local day. It treats a `lastLunchConfirmation` at or after today's resolved
+`lunchWindow.start` as a confirmation made today.
+
+A confirmation earlier on the same local day but before the window opened is
+therefore not recognised, and Jambu may ask again. The error is in the safe
+direction — an extra question, never a suppressed one. Closing it properly
+would require a caller-resolved `localDayStart` on `CareContext`; that is a
+shared-types change and has **not** been made.
+
 ### 7.4 Overlap and cooldown
 
 At most one intervention is live at a time. When several types qualify, the

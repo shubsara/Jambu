@@ -8,6 +8,7 @@ import type { CareContext, UserPreferences } from '@jambu/shared-types';
 import { describe, expect, it } from 'vitest';
 
 import {
+  SCORING_WEIGHTS,
   SCORE_THRESHOLDS,
   decide,
   qualifiesForBreak,
@@ -417,5 +418,177 @@ describe('determinism (§13)', () => {
     const snapshot = JSON.stringify(fixed);
     decide(fixed);
     expect(JSON.stringify(fixed)).toBe(snapshot);
+  });
+});
+
+describe('decision D41 — type-specific scoring signals', () => {
+  const optedIn = { ...PREFERENCES, hydrationEnabled: true };
+  const workHours = (endOffset: number) => ({
+    start: minutesFrom(NOW, -600),
+    end: minutesFrom(NOW, endOffset),
+    confidence: 0.9,
+  });
+
+  it('centralises both new weights in the scoring config', () => {
+    expect(SCORING_WEIGHTS.hydrationGatePassed).toBe(20);
+    expect(SCORING_WEIGHTS.endOfDayGatePassed).toBe(40);
+  });
+
+  it('leaves every §14 weight unchanged', () => {
+    expect(SCORING_WEIGHTS.lunchWindowActive).toBe(30);
+    expect(SCORING_WEIGHTS.continuousWorkOver120).toBe(25);
+    expect(SCORING_WEIGHTS.continuousWorkOver180).toBe(20);
+    expect(SCORING_WEIGHTS.historicalPatternConfidence).toBe(20);
+    expect(SCORING_WEIGHTS.userCurrentlyActive).toBe(10);
+    expect(SCORING_WEIGHTS.noRecentIntervention).toBe(10);
+    expect(SCORING_WEIGHTS.recentIntervention).toBe(-20);
+    expect(SCORING_WEIGHTS.recentDismissal).toBe(-25);
+    expect(SCORING_WEIGHTS.recentSnooze).toBe(-20);
+    expect(SCORING_WEIGHTS.outsideWorkPeriod).toBe(-30);
+    expect(SCORING_WEIGHTS.userPaused).toBe(-100);
+  });
+
+  it('keeps one global threshold of 70 and no per-type thresholds', () => {
+    expect(SCORE_THRESHOLDS.intervene).toBe(70);
+    expect(Object.keys(SCORE_THRESHOLDS)).toEqual(['monitor', 'intervene']);
+  });
+
+  // --- hydration -----------------------------------------------------------
+  it('hydration reaches the threshold only once its gate passes', () => {
+    const eligible = context({ continuousWorkMinutes: 300, preferences: optedIn });
+    expect(qualifiesForHydration(eligible).qualifies).toBe(true);
+    expect(scoreFor(eligible, 'hydration').score).toBe(85);
+    expect(decide(eligible).interventionType).toBe('hydration');
+  });
+
+  it('withholds the hydration bonus when the user has not opted in', () => {
+    const notOptedIn = context({ continuousWorkMinutes: 300 });
+    const breakdown = scoreFor(notOptedIn, 'hydration');
+    expect(breakdown.signals.map((s) => s.name)).not.toContain(
+      'hydration eligibility gate passed',
+    );
+    expect(breakdown.score).toBeLessThan(SCORE_THRESHOLDS.intervene);
+  });
+
+  it('withholds the hydration bonus below the activity gate', () => {
+    const tooLittle = context({ continuousWorkMinutes: 30, preferences: optedIn });
+    expect(scoreFor(tooLittle, 'hydration').score).toBeLessThan(
+      SCORE_THRESHOLDS.intervene,
+    );
+  });
+
+  it('withholds the hydration bonus after a recent confirmation', () => {
+    const confirmed = context({
+      continuousWorkMinutes: 300,
+      preferences: optedIn,
+      lastHydrationConfirmation: minutesFrom(NOW, -30),
+    });
+    expect(scoreFor(confirmed, 'hydration').score).toBeLessThan(
+      SCORE_THRESHOLDS.intervene,
+    );
+  });
+
+  // --- end of day ----------------------------------------------------------
+  it('end-of-day reaches the threshold only once its gate passes', () => {
+    const eligible = context({ continuousWorkMinutes: 300, workHours: workHours(-60) });
+    expect(qualifiesForEndOfDay(eligible).qualifies).toBe(true);
+    expect(scoreFor(eligible, 'end_of_day').score).toBe(75);
+    expect(decide(eligible).interventionType).toBe('end_of_day');
+  });
+
+  it('keeps the outside-work-hours penalty applied to end-of-day', () => {
+    const eligible = context({ continuousWorkMinutes: 300, workHours: workHours(-60) });
+    expect(scoreFor(eligible, 'end_of_day').signals).toContainEqual({
+      name: 'outside normal work period',
+      points: -30,
+    });
+  });
+
+  it('withholds the end-of-day bonus before 30 minutes past the work end', () => {
+    const tooEarly = context({ continuousWorkMinutes: 300, workHours: workHours(-29) });
+    const breakdown = scoreFor(tooEarly, 'end_of_day');
+    expect(breakdown.signals.map((s) => s.name)).not.toContain(
+      'end-of-day eligibility gate passed',
+    );
+    expect(breakdown.score).toBeLessThan(SCORE_THRESHOLDS.intervene);
+  });
+
+  it('withholds the end-of-day bonus with no learned work end', () => {
+    const noHours = context({ continuousWorkMinutes: 300 });
+    expect(scoreFor(noHours, 'end_of_day').score).toBeLessThan(
+      SCORE_THRESHOLDS.intervene,
+    );
+  });
+
+  // --- break ---------------------------------------------------------------
+  it('gives break no new bonus, so it stays below 70 without a learned pattern', () => {
+    const noLearning = context({ continuousWorkMinutes: 300 });
+    const breakdown = scoreFor(noLearning, 'break');
+    expect(breakdown.score).toBe(65);
+    expect(breakdown.score).toBeLessThan(SCORE_THRESHOLDS.intervene);
+    expect(breakdown.signals.map((s) => s.name).join()).not.toMatch(/gate passed/);
+  });
+
+  it('lets break reach the threshold once a pattern is learned', () => {
+    const learned = context({
+      continuousWorkMinutes: 300,
+      breakPattern: { averageIntervalMinutes: 45, confidence: 0.9 },
+    });
+    expect(scoreFor(learned, 'break').score).toBe(85);
+  });
+
+  // --- unchanged lunch, and the §15 invariant ------------------------------
+  it('leaves lunch scoring exactly as it was', () => {
+    const learnedWindow = context({
+      continuousWorkMinutes: 300,
+      lunchWindow: lunchWindow(0.9),
+    });
+    expect(scoreFor(learnedWindow, 'lunch').score).toBe(115);
+
+    const defaultWindow = context({
+      continuousWorkMinutes: 130,
+      lunchWindow: lunchWindow(0),
+    });
+    expect(scoreFor(defaultWindow, 'lunch').score).toBe(75);
+  });
+
+  it('still never intervenes on a clock-only context, for any type', () => {
+    const clockOnly = context({
+      continuousWorkMinutes: 0,
+      currentActivity: 'idle',
+      preferences: optedIn,
+      lunchWindow: lunchWindow(0.9),
+      workHours: workHours(-60),
+    });
+    expect(decide(clockOnly).shouldIntervene).toBe(false);
+    for (const type of ['lunch', 'break', 'hydration', 'end_of_day'] as const) {
+      expect(scoreFor(clockOnly, type).score).toBeLessThan(SCORE_THRESHOLDS.intervene);
+    }
+  });
+
+  it('names the new signal in the reason', () => {
+    const hydrating = context({ continuousWorkMinutes: 300, preferences: optedIn });
+    expect(decide(hydrating).reason).toContain('hydration eligibility gate passed +20');
+
+    const wrappingUp = context({ continuousWorkMinutes: 300, workHours: workHours(-60) });
+    expect(decide(wrappingUp).reason).toContain('end-of-day eligibility gate passed +40');
+  });
+
+  it('lets suppression only ever reduce the chance of intervening', () => {
+    const eligible = context({ continuousWorkMinutes: 300, preferences: optedIn });
+    expect(decide(eligible).shouldIntervene).toBe(true);
+
+    for (const suppressed of [
+      { ...eligible, isPaused: true },
+      { ...eligible, snoozedUntilByType: { hydration: minutesFrom(NOW, 30) } },
+      { ...eligible, lastIntervention: minutesFrom(NOW, -10) },
+      {
+        ...eligible,
+        lastDismissalByType: { hydration: minutesFrom(NOW, -30) },
+        consecutiveDismissalsByType: { hydration: 2 },
+      },
+    ]) {
+      expect(decide(suppressed).interventionType).not.toBe('hydration');
+    }
   });
 });

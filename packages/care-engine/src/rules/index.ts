@@ -9,7 +9,7 @@
 import type { CareContext } from '@jambu/shared-types';
 
 import { RULE_THRESHOLDS } from '../config/scoring.js';
-import { isLunchWindowActive } from '../scoring.js';
+import { isLunchWindowActive } from '../predicates.js';
 
 const MS_PER_MINUTE = 60_000;
 

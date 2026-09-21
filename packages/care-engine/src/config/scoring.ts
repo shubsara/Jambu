@@ -26,6 +26,18 @@ export const SCORING_WEIGHTS = {
   /** "No recent intervention +10" */
   noRecentIntervention: 10,
 
+  /**
+   * Decision D41 — type-specific positive signals.
+   *
+   * CLAUDE.md §14 gives an explicit signal only to lunch, which left
+   * hydration and end-of-day unable to reach the threshold at all. These two
+   * weights were surfaced and approved before implementation; they are
+   * scoring signals, never standalone triggers, and every existing rule gate
+   * still has to pass first.
+   */
+  hydrationGatePassed: 20,
+  endOfDayGatePassed: 40,
+
   /** "Recent intervention -20" */
   recentIntervention: -20,
   /** "Recent dismissal -25" */

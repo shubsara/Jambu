@@ -44,7 +44,20 @@ function minutesSince(now: Date, past: Date): number {
  * The engine cannot compute a local day without a timezone database, which
  * decision D39 forbids it from reaching for. Today's lunch window is already
  * resolved to instants by the caller, so a confirmation at or after the start
- * of that window is a confirmation made today.
+ * of that window is treated as a confirmation made today.
+ *
+ * KNOWN CONTRACT LIMITATION (decision D42). This is an approximation, not a
+ * true local-day test: a confirmation made earlier on the same local day but
+ * *before* the window opened is not recognised, so Jambu could ask again.
+ * The failure is in the safe direction — it can only produce an extra
+ * question, never suppress a needed one — and it is accepted rather than
+ * silently widened into a contract change.
+ *
+ * No already-approved `CareContext` field can express the local-day boundary:
+ * `lunchWindow.start` is the only resolved instant available and it is the
+ * window, not the day. Closing the gap properly would mean adding a
+ * caller-resolved `localDayStart: Date` to `CareContext`, which is a
+ * shared-types change and is deliberately NOT made here.
  */
 function lunchConfirmedToday(context: CareContext): boolean {
   const confirmation = context.lastLunchConfirmation;

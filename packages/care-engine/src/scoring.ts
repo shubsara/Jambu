@@ -11,6 +11,8 @@
 import type { CareContext, InterventionType } from '@jambu/shared-types';
 
 import { RULE_THRESHOLDS, SCORING_WEIGHTS } from './config/scoring.js';
+import { isLunchWindowActive, isOutsideWorkPeriod } from './predicates.js';
+import { qualifiesForEndOfDay, qualifiesForHydration } from './rules/index.js';
 
 /** One applied signal, kept so the decision can explain itself (§13). */
 export interface ScoreSignal {
@@ -46,6 +48,16 @@ export function scoreFor(context: CareContext, type: InterventionType): ScoreBre
   // --- positive signals ----------------------------------------------------
   if (type === 'lunch' && isLunchWindowActive(context)) {
     add('lunch window active', SCORING_WEIGHTS.lunchWindowActive);
+  }
+
+  // Decision D41. The bonus is earned only by passing the type's own
+  // eligibility gate, so it can never turn a clock-only context into an
+  // intervention — the gate has already required sustained activity.
+  if (type === 'hydration' && qualifiesForHydration(context).qualifies) {
+    add('hydration eligibility gate passed', SCORING_WEIGHTS.hydrationGatePassed);
+  }
+  if (type === 'end_of_day' && qualifiesForEndOfDay(context).qualifies) {
+    add('end-of-day eligibility gate passed', SCORING_WEIGHTS.endOfDayGatePassed);
   }
 
   if (context.continuousWorkMinutes > RULE_THRESHOLDS.continuousWorkTier1Minutes) {
@@ -107,16 +119,6 @@ export function scoreFor(context: CareContext, type: InterventionType): ScoreBre
   };
 }
 
-/** Whether the current instant falls inside the lunch window. */
-export function isLunchWindowActive(context: CareContext): boolean {
-  const window = context.lunchWindow;
-  if (window === undefined) {
-    return false;
-  }
-  const now = context.currentTime.getTime();
-  return now >= window.start.getTime() && now <= window.end.getTime();
-}
-
 /**
  * Whether a learned pattern backs this type.
  *
@@ -131,29 +133,11 @@ function hasHistoricalConfidence(context: CareContext, type: InterventionType): 
   if (type === 'break') {
     return (context.breakPattern?.confidence ?? 0) > 0;
   }
-  if (type === 'end_of_day') {
-    return (context.workHours?.confidence ?? 0) > 0;
-  }
-  // Hydration has no learned pattern of its own.
+  // End-of-day and hydration do not earn this term. The approved D41
+  // arithmetic puts their maxima at 75 and 85, which holds only if the
+  // historical-confidence bonus is not also applied: end-of-day's learned
+  // work end is already what its own +40 gate signal rewards.
   return false;
 }
 
-/**
- * Whether the instant falls outside the working day.
- *
- * Decision D39: the engine performs pure instant comparison only. Work hours
- * arrive already resolved by the caller, because converting a local `HH:mm` to
- * an instant needs a timezone database the engine must not reach for.
- *
- * When the caller supplies no resolved work hours, no penalty is applied —
- * asserting the user is outside their working day on no evidence would be a
- * guess, and §15 warns against acting on the clock alone.
- */
-export function isOutsideWorkPeriod(context: CareContext): boolean {
-  const hours = context.workHours;
-  if (hours === undefined) {
-    return false;
-  }
-  const now = context.currentTime.getTime();
-  return now < hours.start.getTime() || now > hours.end.getTime();
-}
+export { isLunchWindowActive, isOutsideWorkPeriod } from './predicates.js';
