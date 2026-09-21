@@ -22,8 +22,9 @@
     "db:start": "supabase start",
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
-    "test:db": "vitest run --config vitest.db.config.ts",
-    "typecheck:db": "tsc --noEmit -p database/tsconfig.json"
+    "test:db": "node scripts/with-supabase-env.mjs vitest run --config vitest.db.config.ts",
+    "typecheck:db": "tsc --noEmit -p database/tsconfig.json",
+    "test:api": "node scripts/with-supabase-env.mjs vitest run --config vitest.api.config.ts"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
