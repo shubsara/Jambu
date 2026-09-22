@@ -730,3 +730,86 @@ Per §37: no desktop or mobile app, no voice, no chatbot, no wearables, no
 nutrition or calorie data, no medical recommendations, no gamification or
 streaks, no social or team features, no productivity analytics, no payments,
 and **no LLM anywhere in the decision path** (§21).
+
+---
+
+## 15. Beta Setup / Operational Notes
+
+Operational facts discovered while accepting P8 in a real browser. These
+describe how to run the system, not how it is designed; none of them implies a
+change to the product.
+
+### 15.1 CORS is coupled to the unpacked extension ID
+
+**The extension's ID must be listed in `CORS_ALLOWED_ORIGINS` before sign-in
+will work.** The popup calls the API from a document context and the extension
+requests no host permissions (decision D55), so every call is an ordinary
+cross-origin request carrying `Origin: chrome-extension://<id>`. An unlisted
+origin gets no CORS grant, exactly as decision D19 intends.
+
+```
+CORS_ALLOWED_ORIGINS=http://127.0.0.1:3000,chrome-extension://<extension-id>
+```
+
+The ID is not knowable until the extension is loaded unpacked, so beta setup is
+necessarily two passes: load it, copy the ID, add it, restart the API.
+
+**Known rough edge, deliberately not fixed.** `@fastify/cors` treats a
+disallowed origin as "CORS does not apply": it sets `Vary: Origin`, declines to
+add `Access-Control-Allow-Origin`, and lets the request continue. No `OPTIONS`
+route is declared for these paths, so the preflight falls through to the
+not-found handler and the browser reports:
+
+```
+404 NOT_FOUND — "The requested route does not exist."
+```
+
+That is correct, strict behaviour, but it reads like a routing bug rather than
+a rejected origin and cost a full debugging cycle during P8. Returning `403`
+instead was considered and **deliberately declined** — the CORS implementation
+is not being changed. Anyone debugging a failed sign-in should read a
+preflight 404 as *"this origin is not in the allowlist"*.
+
+Verify before opening Chrome; this must print `204`:
+
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' -X OPTIONS \
+  http://127.0.0.1:3000/api/auth/login \
+  -H 'Origin: chrome-extension://<extension-id>' \
+  -H 'Access-Control-Request-Method: POST'
+```
+
+### 15.2 Restarting the API after an `.env` change
+
+Node reads `--env-file` **once, at startup**. A running server never re-reads
+it, so any `.env` edit requires a genuine restart.
+
+Confirm the port is actually free first. During P8 a stale process kept port
+3000 while each replacement died on `EADDRINUSE`; because it was launched in
+the background the error was never seen, and the old single-origin allowlist
+kept serving:
+
+```bash
+lsof -nP -iTCP:3000 -sTCP:LISTEN     # expect no output before starting
+```
+
+Start it in the **foreground** during setup so a bind failure is visible rather
+than silent. Checking `node --env-file=.env -e 'console.log(...)'` proves only
+that the *file* is correct — it spawns a fresh process and says nothing about
+the one already listening.
+
+### 15.3 No registration UI before P12
+
+P8 ships **sign-in only** (decision D58); registration and onboarding belong to
+P12. Until then, beta and test accounts are created through the API:
+
+```bash
+curl -s -X POST http://127.0.0.1:3000/api/auth/register \
+  -H 'content-type: application/json' \
+  -d '{"email":"tester@example.com","password":"<password>","timezone":"Asia/Kolkata"}'
+```
+
+Note also that Supabase may return a created user and **no session** when email
+confirmation is enabled; the response is then `201` with `{ user }` and no
+tokens. Handling that in the client is a P12 concern, recorded against P8 in
+the implementation plan.
