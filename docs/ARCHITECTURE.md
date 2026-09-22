@@ -733,6 +733,39 @@ and **no LLM anywhere in the decision path** (§21).
 
 ---
 
+## 14.1 Activity Tracking in the Extension (P9 decisions)
+
+Decisions D60-D66, settled before implementation.
+
+| # | Decision |
+|---|---|
+| **D60** | `<all_urls>` is added for **domain attribution only**. `scripting` is *not* added; it arrives with the Care Card in P10. |
+| **D61** | A domain change **closes** the current session and **opens** a new one, so every stored session has exactly one domain. |
+| **D62** | `chrome.idle` detection threshold is **60 seconds**. D6's 10-minute continuity rule stays authoritative in P5 derivation and is **not** duplicated or redefined in the tracker. |
+| **D63** | P9 **ignores** `pendingInterventions` on the sync response - it neither stores nor notifies. P10 owns intervention presentation. |
+| **D64** | Flush when the buffer reaches **20 sessions** or on a **5-minute** `chrome.alarms` tick, whichever comes first. No `setTimeout` in background code. |
+| **D65** | Buffer cap **500 sessions**, oldest-first eviction. |
+| **D66** | Only `http`/`https` URLs produce a domain. Other schemes produce a **domain-null** session; the original URL is never persisted. |
+
+### Bounded data loss (D65)
+
+The buffer holds 500 sessions - the same ceiling as the API's batch maximum, so
+a full buffer is always expressible as one request. Eviction is oldest-first
+and **only** occurs once the backlog exceeds 500 unsynced sessions. Within that
+bound there is no loss: the 30-minute backend-outage acceptance case must
+demonstrate every session surviving and syncing on recovery.
+
+### Privacy boundary (CLAUDE.md §9)
+
+The hostname is extracted **inside the tab-event handler** and the full URL is
+discarded there. It never enters `chrome.storage`, never crosses the network,
+and is never logged - along with page titles and page content. `POST
+/api/activity/session` remains the final boundary: decision D23 makes it reject
+any payload carrying a path, query or fragment, so a leak fails loudly rather
+than silently persisting.
+
+---
+
 ## 15. Beta Setup / Operational Notes
 
 Operational facts discovered while accepting P8 in a real browser. These
