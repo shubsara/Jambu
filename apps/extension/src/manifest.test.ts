@@ -30,17 +30,18 @@ const manifest = JSON.parse(
 };
 
 describe('permission snapshot (decision D55)', () => {
-  it('requests exactly the permissions P8 uses', () => {
-    expect(manifest.permissions).toEqual(['storage']);
+  it('requests exactly the permissions P8-P9 use', () => {
+    // storage: P8 auth + P9 buffer. idle + alarms: P9 (decisions D62, D64).
+    expect(manifest.permissions).toEqual(['storage', 'idle', 'alarms']);
   });
 
-  it('requests no host permissions yet', () => {
-    // <all_urls> arrives with the Care Card in P10, not before.
-    expect(manifest.host_permissions).toBeUndefined();
+  it('requests host access for domain attribution only (decision D60)', () => {
+    expect(manifest.host_permissions).toEqual(['<all_urls>']);
   });
 
   it('does not request permissions that later phases will need', () => {
-    for (const later of ['alarms', 'idle', 'scripting', 'notifications']) {
+    // scripting and notifications arrive with the Care Card in P10.
+    for (const later of ['scripting', 'notifications']) {
       expect(manifest.permissions).not.toContain(later);
     }
   });
@@ -85,5 +86,12 @@ describe('manifest validity', () => {
   it('declares no content scripts yet (the Care Card is P10)', () => {
     expect(manifest.content_scripts).toBeUndefined();
     expect(manifest.web_accessible_resources).toBeUndefined();
+  });
+
+  it('holds host access without the means to inject, until P10', () => {
+    // <all_urls> is here for reading the active tab's domain. Injection needs
+    // `scripting`, which P9 deliberately does not request.
+    expect(manifest.host_permissions).toContain('<all_urls>');
+    expect(manifest.permissions).not.toContain('scripting');
   });
 });
