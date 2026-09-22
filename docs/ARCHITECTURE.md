@@ -755,6 +755,34 @@ and **only** occurs once the backlog exceeds 500 unsynced sessions. Within that
 bound there is no loss: the 30-minute backend-outage acceptance case must
 demonstrate every session surviving and syncing on recovery.
 
+### Implementation notes settled during P9
+
+Four behaviours that fell out of implementation rather than from a numbered
+decision. Recorded so they are choices on the record, not accidents.
+
+**Sub-second sessions are dropped.** Rapid tab switching would otherwise
+produce a stored row per flicker, none of which represents work. A session
+shorter than one second is discarded rather than buffered.
+
+**Sessions longer than 24 hours are dropped, not clamped.** `POST
+/api/activity/session` refuses anything beyond
+`MAX_ACTIVE_SECONDS_PER_SESSION` (decision D25), so such a session could never
+be accepted; keeping it would mean retrying a request that can only ever fail.
+This arises when the worker sleeps through a machine suspend. Clamping was
+rejected because a fabricated duration would quietly corrupt
+`continuousWorkMinutes`, which every Care Engine decision reads.
+
+**An HTTP 400 discards the affected batch.** A validation failure is permanent
+— the same payload will be refused every time — and leaving it buffered would
+block every later, valid session behind it. The count is returned to the
+caller; nothing about the content is logged. Transient failures (429, 5xx,
+network) are *not* discarded: those stay buffered and wait for the next alarm.
+
+**`syncBufferedActivity` accepts injectable `ApiClientDeps`.** This is a
+testability improvement, not a product behaviour change: it lets tests exercise
+the bounded backoff without waiting out the real schedule. Production callers
+pass nothing and get the real `fetch`, `sleep` and clock.
+
 ### Privacy boundary (CLAUDE.md §9)
 
 The hostname is extracted **inside the tab-event handler** and the full URL is
