@@ -24,6 +24,7 @@ import {
 } from '../lib/api-client.js';
 import { hasSession } from '../lib/storage.js';
 import { readBuffer, removeSessions, type BufferedSession } from './activity-buffer.js';
+import { deliverFirst, type PendingIntervention } from './notification-orchestrator.js';
 
 export type SyncOutcome =
   | { readonly status: 'idle'; readonly reason: 'empty' | 'signed-out' }
@@ -34,8 +35,8 @@ export type SyncOutcome =
 interface IngestResponse {
   readonly accepted: number;
   readonly duplicates: number;
-  // Decision D63: P9 ignores this. P10 owns intervention presentation.
-  readonly pendingInterventions?: unknown[];
+  /** Decision D4's primary path — the decision rides back on this response. */
+  readonly pendingInterventions?: readonly PendingIntervention[];
 }
 
 /** The payload, built so only domains and durations can leave the browser. */
@@ -88,6 +89,17 @@ export async function syncBufferedActivity(deps?: ApiClientDeps): Promise<SyncOu
     // Duplicates are a successful outcome: the API accepted them once already,
     // so they must leave the buffer too (CLAUDE.md §26).
     await removeSessions(batch.map((session) => session.clientSessionId));
+
+    // Decision D4 primary path. Delivery is best-effort: activity is already
+    // stored, and a card that cannot be shown must not fail the sync.
+    const pending = result.pendingInterventions ?? [];
+    if (pending.length > 0) {
+      try {
+        await deliverFirst(pending, new Date());
+      } catch {
+        // Nothing to recover; the fallback poll will try again.
+      }
+    }
 
     return {
       status: 'synced',

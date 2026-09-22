@@ -13,6 +13,7 @@
 import { hasSession, readProfile, type StoredProfile } from '../lib/storage.js';
 import { registerAlarms } from './alarms.js';
 import { registerIdleListeners } from './idle.js';
+import { submitResponse, type CardResponseValue } from './response-submitter.js';
 import { registerTabListeners } from './tabs.js';
 
 /** What the popup asks the worker for. */
@@ -59,7 +60,33 @@ export function registerListeners(runtime = globalThis.chrome?.runtime): void {
   );
 }
 
+/**
+ * Answers coming back from the Care Card.
+ *
+ * The message carries an intervention id and a response value and nothing
+ * else; no page information crosses this boundary (CLAUDE.md §9).
+ */
+export function registerCardResponseListener(runtime = globalThis.chrome?.runtime): void {
+  runtime?.onMessage?.addListener((message: unknown) => {
+    const candidate = message as {
+      type?: string;
+      interventionId?: string;
+      response?: CardResponseValue;
+    };
+    if (
+      candidate?.type !== 'jambu:card-response' ||
+      typeof candidate.interventionId !== 'string' ||
+      candidate.response === undefined
+    ) {
+      return false;
+    }
+    void submitResponse(candidate.interventionId, candidate.response, new Date());
+    return false;
+  });
+}
+
 registerListeners();
+registerCardResponseListener();
 
 // P9: observe activity, detect idle, and schedule the batched flush. Each
 // registration is a no-op when its API is unavailable, so the worker still

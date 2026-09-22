@@ -5,6 +5,7 @@
  * worker and pending timers die with it. Lint enforces this in background
  * code, so the rule cannot quietly erode.
  */
+import { pollInterventions } from './intervention-poll.js';
 import { syncBufferedActivity } from './sync.js';
 
 /** Decision D64 — the periodic flush, also ARCHITECTURE.md §5.2's fallback tick. */
@@ -22,6 +23,8 @@ export function registerAlarms(alarms = globalThis.chrome?.alarms): void {
     if (alarm.name !== SYNC_ALARM_NAME) {
       return;
     }
-    void syncBufferedActivity();
+    // Decision D73: one cadence. Sync first, so the primary path gets the
+    // chance to deliver before the fallback poll looks for anything missed.
+    void syncBufferedActivity().then(() => pollInterventions(new Date()));
   });
 }
