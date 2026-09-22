@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "description": "A little digital companion that looks out for you while you work.",
   "minimum_chrome_version": "116",
-  "permissions": ["storage", "idle", "alarms"],
+  "permissions": ["storage", "idle", "alarms", "scripting", "notifications"],
   "host_permissions": ["<all_urls>"],
   "background": {
     "service_worker": "background/service-worker.js",

@@ -30,20 +30,31 @@ const manifest = JSON.parse(
 };
 
 describe('permission snapshot (decision D55)', () => {
-  it('requests exactly the permissions P8-P9 use', () => {
-    // storage: P8 auth + P9 buffer. idle + alarms: P9 (decisions D62, D64).
-    expect(manifest.permissions).toEqual(['storage', 'idle', 'alarms']);
+  it('requests exactly the permissions P8-P10 use', () => {
+    // storage: P8 auth + P9 buffer. idle + alarms: P9 (D62, D64).
+    // scripting + notifications: P10 Care Card and its fallback (D3, D67).
+    expect(manifest.permissions).toEqual([
+      'storage',
+      'idle',
+      'alarms',
+      'scripting',
+      'notifications',
+    ]);
   });
 
   it('requests host access for domain attribution only (decision D60)', () => {
     expect(manifest.host_permissions).toEqual(['<all_urls>']);
   });
 
-  it('does not request permissions that later phases will need', () => {
-    // scripting and notifications arrive with the Care Card in P10.
-    for (const later of ['scripting', 'notifications']) {
-      expect(manifest.permissions).not.toContain(later);
-    }
+  it('now matches ARCHITECTURE.md §9.3 exactly, with no further widening planned', () => {
+    expect(manifest.permissions).toEqual([
+      'storage',
+      'idle',
+      'alarms',
+      'scripting',
+      'notifications',
+    ]);
+    expect(manifest.host_permissions).toEqual(['<all_urls>']);
   });
 
   it('never requests tabs (decision D3)', () => {
@@ -83,15 +94,16 @@ describe('manifest validity', () => {
     expect(manifest.action?.default_popup).toBe('popup/index.html');
   });
 
-  it('declares no content scripts yet (the Care Card is P10)', () => {
+  it('declares no static content scripts - the card is injected on demand', () => {
+    // Decision D3: injection happens only at the moment of an intervention,
+    // which is narrower than a static all-frames content script.
     expect(manifest.content_scripts).toBeUndefined();
-    expect(manifest.web_accessible_resources).toBeUndefined();
   });
 
-  it('holds host access without the means to inject, until P10', () => {
-    // <all_urls> is here for reading the active tab's domain. Injection needs
-    // `scripting`, which P9 deliberately does not request.
-    expect(manifest.host_permissions).toContain('<all_urls>');
-    expect(manifest.permissions).not.toContain('scripting');
+  it('exposes no web-accessible resources', () => {
+    // The card's CSS is read by the extension and passed to the injected
+    // script, never fetched by the page - so nothing needs exposing, and no
+    // page can detect the extension by probing for its files.
+    expect(manifest.web_accessible_resources).toBeUndefined();
   });
 });
