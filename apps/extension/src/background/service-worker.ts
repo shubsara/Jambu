@@ -11,6 +11,9 @@
  * permission to use it.
  */
 import { hasSession, readProfile, type StoredProfile } from '../lib/storage.js';
+import { registerAlarms } from './alarms.js';
+import { registerIdleListeners } from './idle.js';
+import { registerTabListeners } from './tabs.js';
 
 /** What the popup asks the worker for. */
 export type WorkerMessage = { readonly type: 'auth:state' };
@@ -57,3 +60,10 @@ export function registerListeners(runtime = globalThis.chrome?.runtime): void {
 }
 
 registerListeners();
+
+// P9: observe activity, detect idle, and schedule the batched flush. Each
+// registration is a no-op when its API is unavailable, so the worker still
+// loads in a context without them.
+registerTabListeners();
+registerIdleListeners();
+registerAlarms();

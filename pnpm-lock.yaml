@@ -235,6 +235,9 @@ importers:
 
   apps/extension:
     dependencies:
+      '@jambu/shared-types':
+        specifier: workspace:*
+        version: link:../../packages/shared-types
       react:
         specifier: ^19.3.0
         version: 19.3.0
