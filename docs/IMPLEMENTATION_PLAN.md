@@ -560,6 +560,18 @@ data; export contains no page content.
 contains a domain, URL, page content, email or token** (automated assertion);
 Sentry scrubbing verified; analytics failure never breaks the care loop.
 
+**Carry-forward from P10 (decision D70) - `shown_at` is not proof of display.**
+`interventions.shown_at` is set when the row is created, not when a card
+actually reached the user's screen. Injection can fail (an uninjectable page,
+no focused window) and the native-notification fallback can be suppressed by
+the OS, so a row can carry `shown_at` while nothing was ever seen.
+
+P10 deliberately did **not** change this: correcting it means an API lifecycle
+change, which was out of scope. P14 must therefore either treat `shown_at` as
+"created, delivery attempted" in every metric derived from it, or introduce a
+genuine delivery-confirmation signal. Reporting it as impressions without that
+decision would overcount.
+
 **Acceptance criteria.**
 - All 12 §29 events emitted, including `jambu_paused` / `jambu_resumed` (D5).
 - §30 metrics derivable from emitted data.

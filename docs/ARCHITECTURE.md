@@ -794,6 +794,40 @@ than silently persisting.
 
 ---
 
+## 14.2 Care Card Delivery (P10 decisions)
+
+Decisions D67-D76, settled before implementation.
+
+| # | Decision |
+|---|---|
+| **D67** | Inject only into the **active tab of the focused window**. If injection fails or the page is uninjectable, fall back to `chrome.notifications`. **Never hunt for another tab** - a card on a page the user is not looking at is worse than no card. |
+| **D68** | Fixed bottom-right, ~320px wide, auto height, 16px inset. Compact, never full-screen. Dismissible by Escape or a close control. |
+| **D69** | The card persists until answered or the tab navigates. **No auto-dismiss, and no fabricated `expired` response.** The server-side 30-minute expiry (D50) stays authoritative. |
+| **D70** | **Deferred.** `shown_at` keeps its creation-time semantics; no API change and no new endpoint. See the P14 carry-forward below. |
+| **D71** | **Do not steal focus on render.** A focus trap engages only once the user interacts with the card. Escape dismisses when focus is inside it. |
+| **D72** | Navigation removes the card with the page. It is **not** re-injected on navigation; the intervention stays unanswered and may resurface through the fallback poll. |
+| **D73** | The D4 fallback poll reuses the **existing 5-minute alarm**. No second alarm, no new cadence constant. |
+| **D74** | Deduplicate by intervention id in `chrome.storage`, cleared on response and pruned after the 30-minute expiry window, so the registry cannot grow without bound. |
+| **D75** | The card's CSS is built as a **separate asset** and adopted into the shadow root, preserving the project's styling architecture. |
+| **D76** | **Manual Chrome acceptance is required.** P10 is not complete on automated tests alone. |
+
+### Why focus is not stolen (D71)
+
+A focus trap is an accessibility requirement, but grabbing focus from someone
+mid-sentence is exactly the interruption CLAUDE.md §3.1 warns against. The card
+therefore renders inert: it is reachable by keyboard, and the trap engages only
+once the user has chosen to interact with it.
+
+### Render-only content script (CLAUDE.md §9)
+
+The injected script receives the text to display and returns the user's answer.
+It never reads the DOM, page text, selection, form state, title, URL or any
+page metadata, and the message it sends back carries **only** an intervention
+id and a response value. No page information reaches storage, a log line or
+the API.
+
+---
+
 ## 15. Beta Setup / Operational Notes
 
 Operational facts discovered while accepting P8 in a real browser. These
