@@ -32,6 +32,9 @@ export default defineConfig({
           __dirname,
           'src/background/service-worker.ts',
         ),
+        // Injected on demand by the orchestrator, never a static content
+        // script (decision D3).
+        'content/care-card': resolve(__dirname, 'src/content/care-card/index.ts'),
       },
       output: {
         entryFileNames: '[name].js',
