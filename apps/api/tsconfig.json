@@ -17,6 +17,9 @@
     },
     {
       "path": "../../packages/message-templates"
+    },
+    {
+      "path": "../../packages/routine-learning"
     }
   ]
 }

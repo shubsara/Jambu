@@ -146,7 +146,7 @@ export async function assembleCareContext(
 
     admin
       .from('routine_patterns')
-      .select('pattern_type, start_time, end_time, confidence')
+      .select('pattern_type, start_time, end_time, interval_minutes, confidence')
       .eq('user_id', userId)
       .is('day_of_week', null),
 
@@ -198,6 +198,7 @@ export async function assembleCareContext(
     pattern_type: string;
     start_time: string | null;
     end_time: string | null;
+    interval_minutes: number | null;
     confidence: number | string;
   }[];
   const routineOf = (type: string) => routineRows.find((r) => r.pattern_type === type);
@@ -221,19 +222,14 @@ export async function assembleCareContext(
         }
       : undefined;
 
-  // A break interval is stored as the span between start_time and end_time;
-  // routine_patterns has no numeric interval column. P11 owns this encoding.
+  // Decision D77: a break interval is a duration, stored in interval_minutes.
+  // P7 read it as a time span, which could not express an interval beyond a
+  // day and misrepresented what start_time and end_time mean.
   const breakRow = routineOf('break_interval');
   const breakPattern =
-    breakRow?.start_time !== null &&
-    breakRow?.start_time !== undefined &&
-    breakRow.end_time !== null &&
-    breakRow.end_time !== undefined
+    breakRow?.interval_minutes !== null && breakRow?.interval_minutes !== undefined
       ? {
-          averageIntervalMinutes: minutesBetweenTimes(
-            breakRow.start_time,
-            breakRow.end_time,
-          ),
+          averageIntervalMinutes: breakRow.interval_minutes,
           confidence: Number(breakRow.confidence),
         }
       : undefined;
@@ -283,13 +279,4 @@ export async function assembleCareContext(
   };
 
   return { context, previousMessageByType: previousMessages(historyRows) };
-}
-
-/** Minutes between two `HH:mm(:ss)` local times. */
-function minutesBetweenTimes(start: string, end: string): number {
-  const toMinutes = (value: string): number => {
-    const [hours, minutes] = value.split(':');
-    return Number(hours) * 60 + Number(minutes);
-  };
-  return Math.max(0, toMinutes(end) - toMinutes(start));
 }

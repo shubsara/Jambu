@@ -12,6 +12,7 @@
 import { domainFromUrl } from '../lib/domain.js';
 import { trackDomain } from './activity-tracker.js';
 import { maybeFlush } from './flush.js';
+import { mayTrack } from './tracking-gate.js';
 
 /**
  * Note the tab the user has moved to.
@@ -20,6 +21,13 @@ import { maybeFlush } from './flush.js';
  * caller cannot accidentally retain it.
  */
 export async function noteActiveUrl(url: string | undefined, now: Date): Promise<void> {
+  // Decision D93 — nothing is observed before the user has finished
+  // onboarding. The check comes first, so the URL is not even reduced to a
+  // hostname for someone who has not consented.
+  if (!(await mayTrack())) {
+    return;
+  }
+
   const domain = domainFromUrl(url);
   const buffered = await trackDomain(domain, now);
   if (buffered) {

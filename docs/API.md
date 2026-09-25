@@ -172,7 +172,9 @@ fallback.
   "lunchEnabled": true, "breakEnabled": true,
   "hydrationEnabled": false,               // opt-in (D7)
   "endDayEnabled": true,
-  "persona": "mom"                         // D10
+  "persona": "mom",                        // D10
+  "timezone": "Asia/Kolkata",              // D90
+  "onboardingCompletedAt": null            // ISO 8601 once complete (A1)
 }
 ```
 
@@ -182,6 +184,15 @@ Accepts a partial object; returns the full updated object. `persona` is
 validated against the registry in `message-templates`; only `"mom"` is valid
 in the MVP, and an unknown value returns `VALIDATION_FAILED` rather than being
 silently stored.
+
+`timezone` (D90) is an IANA name and is written to `users.timezone` — §13
+promises an overridable timezone, and this is the only endpoint that can
+change it. Invalid names return `VALIDATION_FAILED`.
+
+`onboardingCompleted: true` (A2) stamps `users.onboarding_completed_at`. It is
+**explicit and idempotent**: completion is never inferred from an ordinary
+preference update, and a second call does not move the original timestamp.
+Passing `false` is rejected — onboarding cannot be un-completed here.
 
 ---
 
@@ -193,10 +204,18 @@ silently stored.
 {
   "patterns": [
     { "type": "lunch", "dayOfWeek": null, "start": "13:25", "end": "13:45",
-      "confidence": 0.78, "sampleCount": 16, "tier": "high" }
+      "intervalMinutes": null, "confidence": 0.78, "sampleCount": 16, "tier": "high" },
+    { "type": "break_interval", "dayOfWeek": null, "start": null, "end": null,
+      "intervalMinutes": 95, "confidence": 0.4, "sampleCount": 6, "tier": "low" }
   ]
 }
 ```
+
+`type` is `lunch` · `work_start` · `work_end` · `break_interval`. Every element
+carries every field, and the two shapes are mutually exclusive (D77): a
+`break_interval` is a **duration**, so `intervalMinutes` is set and
+`start`/`end` are `null`; the time-of-day types are the reverse.
+`work_start`/`work_end` are degenerate windows where `start` equals `end`.
 
 `tier` follows §16: `insufficient` (<3) · `low` (3–7) · `medium` (8–14) ·
 `high` (15+). With `insufficient`, the API reports the default window and
@@ -317,9 +336,45 @@ endpoint. Backed by `deletion_requests` (audit rows carry no personal data).
 
 ### `GET /api/user/export`
 
-Returns everything Jambu holds for the authenticated user: profile,
-preferences, activity sessions, routine patterns, interventions, pause and
-snooze state. Contains no page content, because none is ever collected (§9).
+Returns everything Jambu holds for the authenticated user, as a **versioned
+JSON document** (decision D105):
+
+```jsonc
+{
+  "schemaVersion": 1,
+  "exportedAt": "2026-09-24T19:40:00Z",
+  "profile":      { "id": "uuid", "email": "a@b.com", "name": null,
+                    "timezone": "Asia/Kolkata", "createdAt": "..." },
+  "preferences":  { /* §6, minus onboardingCompletedAt */ },
+  "onboarding":   { "completedAt": "2026-09-24T07:30:00Z" },
+  "activitySessions": [ { "startedAt": "...", "endedAt": "...",
+                          "activeSeconds": 2100, "domain": "notion.so" } ],
+  "routinePatterns":  [ /* §7 shape */ ],
+  "interventions":    [ /* §8 shape, including responses */ ],
+  "pause":    { "paused": false, "pausedAt": null, "pausedUntil": null },
+  "snoozes":  [ { "type": "lunch", "snoozedUntil": "..." } ]
+}
+```
+
+`schemaVersion` is an integer and increments on any breaking change to this
+shape.
+
+The response is **bounded at 10,000 rows per collection**
+(`EXPORT_MAX_ROWS` in `services/export.ts`). When a collection reaches that
+cap its name appears in `truncated`, so a shortened export always says it was
+shortened:
+
+```jsonc
+{ "truncated": ["activitySessions"] }   // [] when nothing was capped
+```
+
+An export that silently omitted rows would be worse than one that admits a
+limit, so the cap is reported rather than applied quietly. It over-reports at
+exactly the boundary — a collection holding precisely 10,000 rows is marked
+truncated — which errs in the honest direction.
+
+It contains **no URL and no page content** — a registrable domain is the most
+specific thing Jambu ever stores (§1.3, §9).
 
 ### `DELETE /api/user/activity`
 
@@ -330,13 +385,16 @@ Deletes **activity and derived data**, keeping the account:
 - all `interventions`
 
 Preferences, pause and snooze state survive. Requires
-`{ "confirm": "DELETE_ACTIVITY" }` in the body. Irreversible; the response
-states so.
+`{ "confirm": "DELETE_ACTIVITY" }` in the body, typed exactly (D106).
+Irreversible; the response states so.
+
+Deletion is **asynchronous** (D104): the endpoint records the request and
+returns immediately, and the caller polls
+`GET /api/user/deletion-request/:id` for completion.
 
 ```jsonc
-// 200
-{ "deleted": { "activitySessions": 412, "routinePatterns": 4, "interventions": 37 },
-  "deletionRequestId": "uuid" }
+// 202
+{ "deletionRequestId": "uuid", "scope": "activity", "status": "pending" }
 ```
 
 ### `DELETE /api/user/account`
@@ -349,13 +407,32 @@ Deletes the account and all associated data:
 4. records a `deletion_requests` row (`scope: 'account'`), which holds only an
    opaque user id and timestamps
 
-Requires `{ "confirm": "DELETE_ACCOUNT" }`. All tokens are invalidated.
-Irreversible.
+Requires `{ "confirm": "DELETE_ACCOUNT" }`, typed exactly (D106). All tokens
+are invalidated. Irreversible.
+
+Asynchronous like activity deletion (D104) — returns `202` with a
+`deletionRequestId` and `status: "pending"`; the four steps above then run and
+the request moves to `completed`.
+
+**The `202` is the confirmation.** Step 3 invalidates the caller's token, so
+there is no authenticated way for them to poll afterwards. The client treats
+acceptance as success: it clears credentials, returns to signed out, and says
+so (D107).
 
 ### `GET /api/user/deletion-request/:id`
 
 Status of a deletion (`pending` · `completed` · `failed`), so the UI can
 confirm completion rather than assume it.
+
+**Activity scope only.** This route is authenticated, and completing an
+account deletion removes the auth user — so the token needed to poll dies with
+the account it is asking about, and the call returns `401`.
+
+For account scope the successful **`202` is the confirmation** (D104, D107):
+the client clears its credentials and reports completion on that response and
+does not poll afterwards. The server still records the audit row and still
+moves it to `completed`; that row is for operators, not for the departing
+user. Polling is unchanged for activity scope, where the account survives.
 
 ---
 

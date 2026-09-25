@@ -28,6 +28,12 @@ export default defineConfig({
     rollupOptions: {
       input: {
         'popup/index': resolve(__dirname, 'src/popup/index.html'),
+        // Decision D85: onboarding is its own page, opened with
+        // `chrome.tabs.create`, which needs no extra permission.
+        'onboarding/index': resolve(__dirname, 'src/onboarding/index.html'),
+        // Decision D97: settings is its own options page, reached with
+        // `chrome.runtime.openOptionsPage()`.
+        'options/index': resolve(__dirname, 'src/options/index.html'),
         'background/service-worker': resolve(
           __dirname,
           'src/background/service-worker.ts',

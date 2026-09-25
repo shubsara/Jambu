@@ -9,7 +9,7 @@
  * `idle`, `scripting`, `notifications` or `<all_urls>`, this test fails first
  * and the widening is discussed rather than absorbed.
  */
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
@@ -25,6 +25,7 @@ const manifest = JSON.parse(
   host_permissions?: string[];
   background?: { service_worker?: string; type?: string };
   action?: { default_popup?: string };
+  options_ui?: { page?: string; open_in_tab?: boolean };
   content_scripts?: unknown[];
   web_accessible_resources?: unknown[];
 };
@@ -92,6 +93,37 @@ describe('manifest validity', () => {
 
   it('points the action at the popup', () => {
     expect(manifest.action?.default_popup).toBe('popup/index.html');
+  });
+
+  /**
+   * Regression guard for the P13 Settings blocker.
+   *
+   * `chrome.runtime.openOptionsPage()` fails when `options_ui` is absent or
+   * points at a file that does not exist, and the popup's click then produced
+   * no response at all. Nothing asserted either fact, so nothing caught it.
+   */
+  it('declares the options page (decision D97)', () => {
+    expect(manifest.options_ui?.page).toBe('options/index.html');
+    expect(manifest.options_ui?.open_in_tab).toBe(true);
+  });
+
+  it('points options_ui at a page that actually exists', () => {
+    // A manifest can name a file the build never emits; Chrome only complains
+    // at click time, silently, which is exactly how this went unnoticed.
+    const page = manifest.options_ui?.page ?? '';
+    const source = fileURLToPath(new URL(`../src/${page}`, import.meta.url));
+    expect(existsSync(source)).toBe(true);
+  });
+
+  it('adds options_ui without adding a permission', () => {
+    // `options_ui` is a manifest key, not a permission (D3 minimization).
+    expect(manifest.permissions).toEqual([
+      'storage',
+      'idle',
+      'alarms',
+      'scripting',
+      'notifications',
+    ]);
   });
 
   it('declares no static content scripts - the card is injected on demand', () => {

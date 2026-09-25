@@ -15,6 +15,7 @@ import { registerAlarms } from './alarms.js';
 import { registerIdleListeners } from './idle.js';
 import { submitResponse, type CardResponseValue } from './response-submitter.js';
 import { registerTabListeners } from './tabs.js';
+import { openOnboarding } from './tracking-gate.js';
 
 /** What the popup asks the worker for. */
 export type WorkerMessage = { readonly type: 'auth:state' };
@@ -85,8 +86,25 @@ export function registerCardResponseListener(runtime = globalThis.chrome?.runtim
   });
 }
 
+/**
+ * Open onboarding the first time the extension is installed (decision D85).
+ *
+ * Only on `install` — an update or a browser restart must not reopen it, and
+ * a user who skipped deliberately (D92) should not be nagged. The popup keeps
+ * the way back.
+ */
+export function registerInstallListener(runtime = globalThis.chrome?.runtime): void {
+  runtime?.onInstalled?.addListener((details) => {
+    if (details.reason !== 'install') {
+      return;
+    }
+    void openOnboarding();
+  });
+}
+
 registerListeners();
 registerCardResponseListener();
+registerInstallListener();
 
 // P9: observe activity, detect idle, and schedule the batched flush. Each
 // registration is a no-op when its API is unavailable, so the worker still

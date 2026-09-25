@@ -16,7 +16,7 @@ import {
   uninstallFakeChrome,
   type FakeAreas,
 } from '../lib/chrome-fake.test-helpers.js';
-import { saveSession } from '../lib/storage.js';
+import { cacheOnboardingCompletedAt, clearSession, saveSession } from '../lib/storage.js';
 import {
   BUFFER_CAPACITY,
   FLUSH_THRESHOLD,
@@ -58,6 +58,18 @@ async function signedIn(): Promise<void> {
   });
 }
 
+/**
+ * Signed in **and** onboarded (decision D93).
+ *
+ * Tracking is gated on onboarding completion, so the P9 behaviour below is
+ * only reachable once the user has actually consented. The gate itself is
+ * exercised at the bottom of this file.
+ */
+async function consented(): Promise<void> {
+  await signedIn();
+  await cacheOnboardingCompletedAt('2026-09-22T08:00:00.000Z');
+}
+
 /** Injected so the bounded backoff is exercised without real waiting. */
 const fastDeps = {
   fetch: (...args: Parameters<typeof globalThis.fetch>) => globalThis.fetch(...args),
@@ -75,9 +87,10 @@ function respondWith(body: unknown, status = 200) {
   );
 }
 
-beforeEach(() => {
+beforeEach(async () => {
   areas = installFakeChrome();
   __resetRefreshState();
+  await consented();
 });
 
 afterEach(() => {
@@ -246,6 +259,7 @@ describe('buffer capacity and eviction (decision D65)', () => {
 
 describe('sync (CLAUDE.md §26)', () => {
   it('does nothing when signed out, keeping the buffer for later', async () => {
+    await clearSession();
     await appendSession(session());
 
     expect(await syncBufferedActivity(fastDeps)).toEqual({
@@ -458,5 +472,42 @@ describe('decision D63 — interventions are ignored in P9', () => {
     const everythingStored = JSON.stringify([...areas.local.entries()]);
     expect(everythingStored).not.toContain('lunch');
     expect(everythingStored).not.toContain('Have you taken');
+  });
+});
+
+describe('nothing is observed before consent (decision D93)', () => {
+  it('records no session from a tab event when onboarding is unfinished', async () => {
+    await clearSession();
+    await signedIn();
+
+    await noteActiveUrl('https://notion.so/some-page', T0);
+
+    // Not merely unsent — never observed in the first place.
+    expect(await currentSession()).toBeNull();
+    expect(await bufferSize()).toBe(0);
+  });
+
+  it('records nothing for a signed-out browser either', async () => {
+    await clearSession();
+
+    await noteActiveUrl('https://notion.so/some-page', T0);
+    expect(await currentSession()).toBeNull();
+  });
+
+  it('writes no hostname to storage while gated', async () => {
+    await clearSession();
+    await signedIn();
+
+    await noteActiveUrl('https://notion.so/some-page', T0);
+
+    const everythingStored = JSON.stringify([...areas.local, ...areas.session]);
+    expect(everythingStored).not.toContain('notion.so');
+  });
+
+  it('starts observing as soon as onboarding completes', async () => {
+    await consented();
+
+    await noteActiveUrl('https://notion.so/some-page', T0);
+    expect((await currentSession())?.domain).toBe('notion.so');
   });
 });

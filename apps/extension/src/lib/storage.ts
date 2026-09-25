@@ -21,6 +21,9 @@ const ACCESS_TOKEN_KEY = 'auth.accessToken';
 const ACCESS_EXPIRES_KEY = 'auth.accessExpiresAt';
 const REFRESH_TOKEN_KEY = 'auth.refreshToken';
 const PROFILE_KEY = 'auth.profile';
+const ONBOARDING_PROGRESS_KEY = 'onboarding.progress';
+const ONBOARDING_COMPLETE_KEY = 'onboarding.completedAt';
+const PENDING_VIEW_KEY = 'options.pendingView';
 
 /** The signed-in user, as the popup needs to display them. */
 export interface StoredProfile {
@@ -154,12 +157,114 @@ export async function hasSession(): Promise<boolean> {
   return (await readRefreshToken()) !== null;
 }
 
-/** Forget everything. Used on sign-out and on an unrecoverable refresh. */
+/**
+ * Forget everything. Used on sign-out and on an unrecoverable refresh.
+ *
+ * The onboarding cache and any half-finished progress go too: both belong to
+ * the user who just left, and leaving the completion cache behind would let
+ * the next person's session start tracking before the server had agreed (D93).
+ */
 export async function clearSession(): Promise<void> {
   await Promise.all([
-    removeFrom(sessionArea(), [ACCESS_TOKEN_KEY, ACCESS_EXPIRES_KEY]),
-    removeFrom(localArea(), [REFRESH_TOKEN_KEY, PROFILE_KEY]),
+    removeFrom(sessionArea(), [ACCESS_TOKEN_KEY, ACCESS_EXPIRES_KEY, PENDING_VIEW_KEY]),
+    removeFrom(localArea(), [
+      REFRESH_TOKEN_KEY,
+      PROFILE_KEY,
+      ONBOARDING_PROGRESS_KEY,
+      ONBOARDING_COMPLETE_KEY,
+    ]),
   ]);
+}
+
+/**
+ * Onboarding progress (decision D92).
+ *
+ * Kept in `local` so a half-finished flow survives closing the tab, and
+ * deliberately narrow: a step index and four booleans plus a timezone. There
+ * is **no** field here for a lunch time, water schedule, break schedule or
+ * work hours (D88, constraint 7) — the shape is the guard, so a schedule
+ * question could not be persisted even if someone added the input.
+ */
+export interface OnboardingProgress {
+  readonly step: number;
+  readonly timezone?: string;
+  readonly lunchEnabled?: boolean;
+  readonly breakEnabled?: boolean;
+  readonly hydrationEnabled?: boolean;
+  readonly endDayEnabled?: boolean;
+}
+
+export async function saveOnboardingProgress(
+  progress: OnboardingProgress,
+): Promise<void> {
+  await writeTo(localArea(), { [ONBOARDING_PROGRESS_KEY]: progress });
+}
+
+export async function readOnboardingProgress(): Promise<OnboardingProgress | null> {
+  const stored = await readFrom(localArea(), ONBOARDING_PROGRESS_KEY);
+  return stored === undefined || stored === null ? null : (stored as OnboardingProgress);
+}
+
+export async function clearOnboardingProgress(): Promise<void> {
+  await removeFrom(localArea(), [ONBOARDING_PROGRESS_KEY]);
+}
+
+/**
+ * A cache of the server's `onboardingCompletedAt` (resolution A1).
+ *
+ * The server is authoritative (D86). This exists only so the service worker
+ * can answer "may I track?" without a network round trip on every tab event —
+ * and it is written from a server response, never inferred locally.
+ */
+export async function cacheOnboardingCompletedAt(value: string | null): Promise<void> {
+  if (value === null) {
+    await removeFrom(localArea(), [ONBOARDING_COMPLETE_KEY]);
+    return;
+  }
+  await writeTo(localArea(), { [ONBOARDING_COMPLETE_KEY]: value });
+}
+
+export async function readCachedOnboardingCompletedAt(): Promise<string | null> {
+  const stored = await readFrom(localArea(), ONBOARDING_COMPLETE_KEY);
+  return typeof stored === 'string' ? stored : null;
+}
+
+/**
+ * Where the popup is asking the options page to open (decision D97).
+ *
+ * The popup and the options page are separate documents, and
+ * `chrome.runtime.openOptionsPage()` takes no arguments — it cannot carry a
+ * destination. So the popup leaves one here and the options page picks it up.
+ *
+ * `session` rather than `local`: a navigation intent is meaningless after the
+ * browser restarts, and it should not outlive the click that made it.
+ */
+export type PendingOptionsView = 'export' | 'delete-activity' | 'delete-account';
+
+const PENDING_VIEWS: readonly PendingOptionsView[] = [
+  'export',
+  'delete-activity',
+  'delete-account',
+];
+
+export async function savePendingOptionsView(view: PendingOptionsView): Promise<void> {
+  await writeTo(sessionArea(), { [PENDING_VIEW_KEY]: view });
+}
+
+/**
+ * Read the pending view **and clear it**, so it can never fire twice.
+ *
+ * Clearing happens whatever was stored, including an unrecognised value: a
+ * target that is ignored but left in place would sit waiting to surprise the
+ * next visit. Anything outside the allowlist returns `null`.
+ */
+export async function takePendingOptionsView(): Promise<PendingOptionsView | null> {
+  const stored = await readFrom(sessionArea(), PENDING_VIEW_KEY);
+  await removeFrom(sessionArea(), [PENDING_VIEW_KEY]);
+
+  return PENDING_VIEWS.includes(stored as PendingOptionsView)
+    ? (stored as PendingOptionsView)
+    : null;
 }
 
 /** Exposed for tests that need to assert the storage split. */
@@ -168,4 +273,7 @@ export const STORAGE_KEYS = {
   accessExpiresAt: ACCESS_EXPIRES_KEY,
   refreshToken: REFRESH_TOKEN_KEY,
   profile: PROFILE_KEY,
+  onboardingProgress: ONBOARDING_PROGRESS_KEY,
+  onboardingCompletedAt: ONBOARDING_COMPLETE_KEY,
+  pendingOptionsView: PENDING_VIEW_KEY,
 } as const;

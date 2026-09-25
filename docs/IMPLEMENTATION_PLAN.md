@@ -450,8 +450,8 @@ the response and nothing about the page (§9).
 
 **Objective.** Replace default windows with learned ones (§16, D8).
 
-**Files.** `packages/routine-learning/src/{index,lunch,workHours,breakInterval,confidence}.ts`;
-`routes/routines/*`; recalculation job.
+**Files.** `packages/routine-learning/src/{index,observations,lunch,work-hours,break-interval,confidence}.ts`;
+`apps/api/src/routes/routines/*`; `apps/api/src/services/routine-learning.ts`.
 
 **Dependencies.** P10. Package itself is pure and testable earlier.
 
@@ -479,11 +479,28 @@ data model rather than inheriting the P7 reading by default. If a numeric
 interval column is the right answer, that is a P11 migration — P7 deliberately
 did not change the schema.
 
+**Settled (D77).** A numeric column was the right answer. Migration
+`20260922120000_routine_interval_minutes` adds `interval_minutes INTEGER` plus
+a `shape_is_coherent` check that makes the old span encoding impossible to
+insert. `care-context.ts` now reads the column instead of computing a span, and
+the dead `minutesBetweenTimes` helper is gone. See ARCHITECTURE §11.4 and §14.3.
+
 **Acceptance criteria.**
 - Under 3 observations → generic default, never personalization (§16).
 - Confidence feeds the `+20` historical-pattern term in P6.
 - Package pure and deterministic.
 - End-of-day rule now uses the **learned** work-end time (D7).
+
+**Status — implemented, pending approval.** Decisions D77-D84 are recorded in
+ARCHITECTURE §14.3 together with the P11 manual acceptance checklist.
+`packages/routine-learning` carries 35 unit tests; `apps/api/tests/routines.integration.test.ts`
+carries 16 live-stack tests.
+
+**Contract updated.** `GET /api/routines` returns an additional
+`intervalMinutes` field, required by D77 since a break interval has no start or
+end time to report. §7 was silent rather than permissive — it had no field
+capable of expressing a duration at all — so `API.md` §7 now documents both
+pattern shapes.
 
 ---
 
@@ -491,23 +508,69 @@ did not change the schema.
 
 **Objective.** Under two minutes, collecting only what §3.2 permits.
 
-**Files.** `apps/extension/onboarding/`, preference bootstrap.
+Decisions **D85-D96** are approved and recorded in `ARCHITECTURE.md` §14.4.
+**D96** was added during manual acceptance: registration was reachable only
+from the install-time onboarding tab, so the signed-out popup now offers
+"Create account". `ARCHITECTURE.md` §15.3 was rewritten in the same pass — the
+curl registration workaround it documented is retired, which is what D87 set
+out to do.
+
+**Scope is larger than it looks.** `GET`/`PUT /api/preferences` are documented
+in `API.md` §6 and assigned to P12 in §12, but **neither exists yet** — there
+is no `apps/api/src/routes/preferences/` and nothing is registered in
+`app.ts`. P12 therefore builds three things: the preferences API, the first
+registration UI (deferred here by D58), and onboarding itself.
+
+**Files.**
+`apps/api/src/routes/preferences/index.ts`, `schemas/preferences.ts`,
+`services/preferences.ts`, `tests/preferences.integration.test.ts`;
+`apps/extension/src/onboarding/{index.html,main.tsx,App.tsx,machine.ts,steps/*}`;
+`apps/extension/src/lib/{preferences,register}.ts`; plus modifications to
+`vite.config.ts` (fourth entry, D85), `background/service-worker.ts`
+(`onInstalled` + tracking gate, D93), `popup/App.tsx` (resume path, D92),
+`lib/{auth,storage}.ts`, `app.ts` and `packages/shared-types`.
 
 **Dependencies.** P8, P11.
 
-**Database changes.** Writes `user_preferences`; sets `users.timezone`.
+**Database changes.** One migration: `users.onboarding_completed_at
+TIMESTAMPTZ` (D86). `user_preferences` already has every column it needs and
+is seeded at registration; P12 only updates it.
 
-**API changes.** `GET /api/preferences`, `PUT /api/preferences` (`API.md` §6).
+**API changes.** Build `GET /api/preferences` and `PUT /api/preferences` to the
+existing `API.md` §6 contract, **plus `timezone` on `PUT`** (D90) — the one
+contract change in the phase, since §13 promises an overridable timezone and
+no endpoint can currently change `users.timezone` after registration. No new
+user endpoint is created (D90/constraint 4).
 
-**Tests required.** Flow completion; resume after abandonment; timezone
-auto-detected and overridable; preference persistence; **an assertion that the
-flow never asks for lunch time, water schedule or break schedule** (§3.2);
-hydration presented as explicitly opt-in and **off by default** (D7).
+**Tests required.** Flow completion; resume after abandonment; **skip leaves
+tracking off** (D92/D93); timezone auto-detected and overridable; preference
+persistence; hydration presented as explicitly opt-in and **off by default**
+(D7/D89); the D95 step/input bounds; cross-user preference isolation;
+`persona` validated. The §3.2 guard is **primarily a schema invariant** — the
+onboarding state and `PUT` payload types admit no lunch, water, break or work
+schedule field — with a rendered-text scan as a secondary guard (constraint 8).
+
+**Resolutions A1-A6** (approved with D85-D95, detailed in `ARCHITECTURE.md`
+§14.4): **A1** `GET /api/preferences` returns `onboardingCompletedAt`; **A2**
+`PUT /api/preferences` accepts an explicit, idempotent
+`onboardingCompleted: true` and never infers completion; **A3** a registration
+that returns no session stops onboarding, asks the user to verify their email
+and sign in, then resumes at Step 3 from `chrome.storage`; **A4** the migration
+grandfathers existing users as onboarded and leaves new users NULL; **A5**
+skip means account, popup and resume path work while tracking stays off and no
+interventions occur; **A6** `name` is not collected.
 
 **Acceptance criteria.**
-- Completes in under two minutes with defaults (§42).
-- Collects rough work hours + enabled intervention types — nothing more.
+- Completes in under two minutes: **<=5 steps and <=5 required inputs** (D95),
+  asserted in tests, plus a stopwatch reading in the Chrome checklist.
+- Collects **only** timezone and enabled intervention types. **Work hours are
+  not asked** (D88); 09:00-18:00 registration defaults stand (D91) until P11
+  learning supersedes them (D84).
 - Persona defaults to `mom` without asking (D10).
+- Activity tracking begins **only** after onboarding completes (D93).
+- Manifest permissions unchanged (constraint 6).
+- Registration is reachable from the signed-out popup, not only from a fresh
+  install (D96).
 
 ---
 
@@ -518,15 +581,34 @@ hydration presented as explicitly opt-in and **off by default** (D7).
 **Files.** `apps/extension/settings/`, `routes/pause/*`, `routes/snoozes/*`,
 `routes/user/{export,activity,account}.ts`, deletion service.
 
+Decisions **D97-D107** are approved and recorded in `ARCHITECTURE.md` §14.5.
+
+**Starting position — less exists than this entry assumed.** `pause_states`
+has **two readers and no writer**, so no user can pause Jambu today and the
+§14 `-100` term is scored but unreachable. `intervention_snoozes` is written
+only implicitly by a `snoozed` card response (D51) and can never be viewed or
+cleared. `deletion_requests` has **zero references anywhere in the codebase**.
+P13 is where all three become real.
+
 **Dependencies.** P12.
 
-**Database changes.** Writes `pause_states`, `intervention_snoozes`,
-`deletion_requests`; hard-deletes activity/routines/interventions; sets
-`users.deleted_at`.
+**Database changes.** **None.** Every table and column P13 needs already
+exists from P2 — `pause_states`, `intervention_snoozes`, `deletion_requests`
+and `users.deleted_at` (verified against the live schema). P13 writes to them,
+hard-deletes activity/routines/interventions, and sets `users.deleted_at`, but
+ships no migration. It is the first phase since P4 that does not.
 
-**API changes.** All of `API.md` §9–11: pause (GET/POST/DELETE), snoozes
-(GET/POST/DELETE), `GET /api/user/export`, `DELETE /api/user/activity`,
-`DELETE /api/user/account`, `GET /api/user/deletion-request/:id`.
+**API changes.** Implements all ten endpoints in `API.md` §9–11: pause
+(GET/POST/DELETE), snoozes (GET/POST/DELETE), `GET /api/user/export`,
+`DELETE /api/user/activity`, `DELETE /api/user/account`,
+`GET /api/user/deletion-request/:id`.
+
+The contracts were already written in P0, so P13 mostly implements them as
+specified. Three edits were required by the approved decisions: the export
+payload gained a documented versioned schema (D105), and both deletion
+endpoints became **asynchronous**, returning `202` with a
+`deletionRequestId` and `status: "pending"` instead of synchronous counts
+(D104). Typed confirmation is now explicit in the contract (D106).
 
 **Tests required.** Pause suppresses all interventions end to end and expires
 any live one; resume restores; per-type toggles honoured; snooze silences one
@@ -535,12 +617,41 @@ the account; account deletion removes every row **and** the Supabase Auth user;
 deletion touches no other user's rows; `deletion_requests` holds no personal
 data; export contains no page content.
 
+**UI/UX source of truth.** The Jambu 3D mockups govern visual hierarchy,
+illustration style, card treatment, spacing and interaction presentation; the
+architecture and state machines govern behaviour. **The mockup assets are not
+yet in the repository** — they are a precondition for the UI half of P13, and
+until they land only the API layer is implementable.
+
 **Acceptance criteria.**
-- Pausing silences Jambu completely and immediately (§42).
+- Pausing silences Jambu completely and immediately (§42), including removing
+  a Care Card already on screen (D100).
+- Pausing does **not** stop observation — activity keeps accruing (D99).
+- Settings is a dedicated options page; manifest permissions unchanged (D97).
 - A deleted user's activity is genuinely gone from the database (§42).
 - Each of the four intervention types can be disabled independently (§42).
 - Destructive endpoints require the explicit `confirm` value and say they are
   irreversible.
+
+**Carry-forward from P13 - PostgREST caps every read at 1000 rows.**
+`supabase/config.toml` sets `max_rows = 1000`, and PostgREST enforces it
+regardless of any larger `.limit()` the caller asks for. P13's export hit this
+directly: a `.limit(10_000)` returned 1000 rows and reported nothing as
+truncated, which is exactly the silent truncation D105 forbids. The export now
+reads a page at a time and was the only query fixed.
+
+**No other query was audited or changed.** The same ceiling applies to every
+PostgREST read in the codebase, and any collection that could exceed 1000 rows
+for one user would be quietly shortened in the same way. The known candidates
+are activity reads behind user-state derivation and routine learning, and
+`listForDay` in the intervention service - none of which is likely to reach
+1000 rows for a beta user, which is why this is a recorded item rather than an
+emergency.
+
+Scope for a later phase: enumerate every `.from(...).select(...)` that can
+return an unbounded per-user collection, and either paginate it or prove the
+1000-row ceiling cannot bite. Purely an audit - no behaviour change is assumed
+to be needed.
 
 ---
 

@@ -13,6 +13,7 @@ import type { SupabaseClients } from '../../plugins/supabase.js';
 import { activityBatchSchema } from '../../schemas/activity.js';
 import { ingestSessions } from '../../services/activity.js';
 import { createIfWarranted } from '../../services/intervention.js';
+import { recalculateIfStale } from '../../services/routine-learning.js';
 
 export interface ActivityRouteOptions {
   readonly maxRequestsPerMinute: number;
@@ -55,6 +56,19 @@ export function registerActivityRoutes(
       }
 
       const result = await ingestSessions(clients.admin, userId, parsed.data.sessions);
+
+      // Decision D83: routines are recalculated lazily here because the
+      // project introduces no scheduler. Best-effort, exactly like the
+      // decision step below — activity is already committed, and a learning
+      // failure must never make the extension retry a batch we accepted.
+      try {
+        await recalculateIfStale(clients.admin, userId, new Date());
+      } catch {
+        request.log.error(
+          { event: 'routine_recalculation_failed', stage: 'activity_sync' },
+          'routine recalculation failed after activity was accepted',
+        );
+      }
 
       // Decision D4: the decision rides back on the ingest response, so the
       // common case needs no poll.

@@ -19,5 +19,8 @@
   "scripts": {
     "build": "tsc --build",
     "clean": "tsc --build --clean"
+  },
+  "dependencies": {
+    "@jambu/shared-types": "workspace:*"
   }
 }

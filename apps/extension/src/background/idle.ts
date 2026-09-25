@@ -11,6 +11,7 @@
  * combine is decided once, elsewhere.
  */
 import { closeSession } from './activity-tracker.js';
+import { mayTrack } from './tracking-gate.js';
 
 /** Decision D62. `chrome.idle` requires at least 15 seconds. */
 export const IDLE_DETECTION_SECONDS = 60;
@@ -29,6 +30,10 @@ export async function handleIdleStateChange(
   now: Date,
 ): Promise<boolean> {
   if (state === 'active') {
+    return false;
+  }
+  // Decision D93 — with tracking gated there is no open session to close.
+  if (!(await mayTrack())) {
     return false;
   }
   return closeSession(now);

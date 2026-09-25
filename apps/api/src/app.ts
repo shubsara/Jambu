@@ -15,6 +15,11 @@ import { buildAuthenticate } from './auth/authenticate.js';
 import { registerActivityRoutes } from './routes/activity/session.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerInterventionRoutes } from './routes/interventions/index.js';
+import { registerPauseRoutes } from './routes/pause/index.js';
+import { registerPreferenceRoutes } from './routes/preferences/index.js';
+import { registerSnoozeRoutes } from './routes/snoozes/index.js';
+import { registerRoutineRoutes } from './routes/routines/index.js';
+import { registerPrivacyRoutes } from './routes/user/privacy.js';
 import { registerUserStateRoutes } from './routes/user/state.js';
 import { registerHealthRoute } from './routes/health.js';
 
@@ -154,6 +159,31 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   // Decision D29: the state endpoint reuses the activity budget rather than
   // introducing a third knob.
+  registerRoutineRoutes(app, clients, {
+    maxRequestsPerMinute: config.activityRateLimitMax,
+    authenticate: buildAuthenticate(clients),
+  });
+
+  registerPreferenceRoutes(app, clients, {
+    maxRequestsPerMinute: config.activityRateLimitMax,
+    authenticate: buildAuthenticate(clients),
+  });
+
+  registerPauseRoutes(app, clients, {
+    maxRequestsPerMinute: config.activityRateLimitMax,
+    authenticate: buildAuthenticate(clients),
+  });
+
+  registerSnoozeRoutes(app, clients, {
+    maxRequestsPerMinute: config.activityRateLimitMax,
+    authenticate: buildAuthenticate(clients),
+  });
+
+  registerPrivacyRoutes(app, clients, {
+    maxRequestsPerMinute: config.activityRateLimitMax,
+    authenticate: buildAuthenticate(clients),
+  });
+
   registerUserStateRoutes(app, clients, {
     maxRequestsPerMinute: config.activityRateLimitMax,
     authenticate: buildAuthenticate(clients),

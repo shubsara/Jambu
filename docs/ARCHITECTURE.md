@@ -578,12 +578,31 @@ pattern_type VARCHAR NOT NULL,     -- 'lunch' | 'work_start' | 'work_end' | 'bre
 day_of_week  INTEGER CHECK (day_of_week BETWEEN 0 AND 6),   -- NULL = all days
 start_time   TIME,
 end_time     TIME,
+interval_minutes INTEGER,          -- decision D77: break_interval only
 confidence   DECIMAL(3,2) NOT NULL DEFAULT 0 CHECK (confidence BETWEEN 0 AND 1),
 sample_count INTEGER NOT NULL DEFAULT 0,
 updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
 -- Decision D13, verified on PostgreSQL 17.6.
 UNIQUE NULLS NOT DISTINCT (user_id, pattern_type, day_of_week)
 ```
+
+A `break_interval` is a **duration**, not a time of day, and decision D77
+gives it its own column rather than smuggling it into `start_time`/`end_time`.
+Two check constraints keep the two shapes from mixing:
+
+```sql
+-- routine_patterns_shape_is_coherent
+(pattern_type = 'break_interval'
+   and interval_minutes is not null and start_time is null and end_time is null)
+or (pattern_type <> 'break_interval' and interval_minutes is null)
+
+-- routine_patterns_interval_minutes_positive
+interval_minutes is null or interval_minutes > 0
+```
+
+The first is what makes the old span encoding (`'00:00'`-`'01:30'` meaning
+ninety minutes) impossible to insert, and an interval longer than a day
+expressible at all.
 
 `NULLS NOT DISTINCT` is load-bearing, not cosmetic. `day_of_week IS NULL`
 means "all days", and under Postgres' default `NULLS DISTINCT` this constraint
@@ -826,6 +845,397 @@ page metadata, and the message it sends back carries **only** an intervention
 id and a response value. No page information reaches storage, a log line or
 the API.
 
+## 14.3 Routine Learning (P11 decisions)
+
+Decisions D77-D84, settled before implementation.
+
+| # | Decision |
+|---|---|
+| **D77** | A break interval is stored in its own `interval_minutes INTEGER` column. **Durations are never encoded as time spans**, so an interval longer than a day is expressible and the two shapes cannot be confused. |
+| **D78** | Lunch is learned from the **longest idle gap inside the midday search window** (11:00-15:00 local), at most one observation per day, gaps under 15 minutes ignored. |
+| **D79** | Learning reads a rolling **28-day** window of activity. Older behaviour is allowed to fall out of the picture. |
+| **D80** | Patterns are learned **across all days** (`day_of_week IS NULL`). Per-weekday learning is deferred; the schema already allows it. |
+| **D81** | Confidence is a function of sample count alone: `insufficient` 0, `low` 0.4 (3+), `medium` 0.65 (8+), `high` 0.85 (15+). |
+| **D82** | Windows are built from the **median**, not the mean, so one unusual day cannot drag the learned time. Treated as a representative-data acceptance test, not a universal mathematical guarantee. |
+| **D83** | Recalculation is **lazy and best-effort**, triggered on activity ingest when the stored patterns are more than 24 hours old. **No scheduler.** A learning failure never fails the ingest. |
+| **D84** | Work start and end are the **medians of each day's first start and last end**, stored as degenerate windows. |
+
+### The learning package sees no domains (CLAUDE.md §9)
+
+`packages/routine-learning` receives only `{ localDay, startMinute, endMinute }`
+per run. It has no domain, no URL, no session id and no user id, and the API
+layer's query deliberately selects only `started_at, ended_at, active_seconds`.
+The package cannot leak what it was never given, and a test asserts the
+observation object has exactly those three keys.
+
+### Why learning is lazy rather than scheduled (D83)
+
+A scheduler would be a second source of truth about when work happens, and a
+second thing to operate. Recalculation instead rides the traffic that already
+exists: an activity sync checks whether the stored patterns are stale and, if
+so, recomputes them before the decision step. Staleness is read from
+`max(routine_patterns.updated_at)`, so no extra column and no second migration
+was needed.
+
+The ingest is authoritative. If recalculation throws, the batch is still
+accepted and a `routine_recalculation_failed` line is logged — the same
+best-effort shape P7 and P9 use.
+
+### What counts as an observation
+
+Lunch and work hours are counted **per day**; a break interval is counted **per
+run**. Three days of split work therefore yields three lunch observations but
+six break observations, and the two cross the D81 threshold at different times.
+
+### P11 manual acceptance checklist
+
+Automated coverage is the gate here - P11 has no new user-visible surface, so
+unlike P8 and P10 this checklist is a confirmation, not a separate approval.
+With `pnpm db:start` running and the API up:
+
+1. **A new account learns nothing.** `GET /api/routines` returns `{"patterns": []}`.
+2. **Three days of split work produce a lunch window.** Seed three days with a
+   midday gap, `POST /api/routines/recalculate`, and confirm a `lunch` pattern
+   whose `start`/`end` bracket the median gap, `tier: "low"`, `sampleCount: 3`.
+3. **User state flips source.** `GET /api/user/state` reports
+   `lunchWindow.source: "default"` before recalculation and `"learned"` after.
+4. **Break interval is a duration.** The `break_interval` row has a positive
+   `interval_minutes` and `NULL` `start_time`/`end_time`.
+5. **The old encoding is rejected.** Inserting a `break_interval` row with
+   `start_time`/`end_time` fails on `routine_patterns_shape_is_coherent`.
+6. **Recalculation is idempotent.** Running it three times leaves the same rows
+   and the same row count.
+7. **Lazy recalculation fires.** A fresh activity sync on a user with stale
+   patterns updates them; a sync minutes later does not.
+8. **Ingest survives a learning failure.** Activity is still accepted with
+   `accepted: 1` and the session is stored.
+9. **No domain leaks.** The `GET /api/routines` body contains no hostname.
+
+Checks 1-9 are all covered by `apps/api/tests/routines.integration.test.ts`;
+running `pnpm test:api` exercises every one against the live stack.
+
+---
+
+## 14.4 Onboarding (P12 decisions)
+
+Decisions D85-D95, settled before implementation.
+
+| # | Decision |
+|---|---|
+| **D85** | Onboarding renders as its **own page**, opened with `chrome.tabs.create` on install. No new permission: `chrome.tabs.create` does not require `tabs`, so D3 minimization holds. |
+| **D86** | Completion is **server-side**: `users.onboarding_completed_at TIMESTAMPTZ`. It survives reinstall and reaches a second device. |
+| **D87** | The **full registration form** ships in onboarding, retiring the §15.3 curl workaround. |
+| **D88** | **Work hours are not asked.** CLAUDE.md §3.2 forbids making the user schedule their own behaviour, and D84 already learns work start and end from activity. Asking would collect something Jambu overwrites within days. |
+| **D89** | Hydration is **one toggle among the four, default OFF** (D7). Not a separate persuasion step. |
+| **D90** | `timezone` is added to **`PUT /api/preferences`** rather than a new user endpoint. §13 promises an overridable timezone and nothing could change `users.timezone` after registration; this closes that gap with the smallest contract change. `API.md` §6 is updated accordingly. |
+| **D91** | Registration keeps writing **09:00-18:00** defaults, so an abandoned onboarding still leaves a usable preferences row. |
+| **D92** | Onboarding is **skippable**, and partial progress lives in `chrome.storage`. The popup offers a path back to finish it. |
+| **D93** | **Activity tracking is gated on completion.** Signing in is not consent to be observed; finishing onboarding is. Skipping leaves tracking off. |
+| **D94** | `PRD.md` §6 is expanded with the actual onboarding requirements, discharging the stub's own "to be written out before P12". |
+| **D95** | "Under two minutes" is made falsifiable as **<=5 steps and <=5 required inputs**, asserted in tests, plus a stopwatch reading during Chrome acceptance. |
+| **D96** | The **signed-out popup exposes a secondary "Create account" action** that opens the onboarding page via `openOnboarding()`. Registration stays exclusively inside that page — the form is never duplicated in the popup. Without this, registration is unreachable once the install-time tab is closed. |
+
+### Why onboarding asks so little (D88, D89)
+
+The flow collects a timezone and four toggles. That is the whole of it.
+
+Every question onboarding could ask about *when* the user eats, drinks, breaks
+or stops is a question P11 answers better from observed behaviour, and §3.2
+exists to stop Jambu becoming the scheduling chore it is meant to replace. The
+09:00-18:00 default (D91) is a bootstrap, not a claim about the user; D84
+replaces it once three days of activity exist.
+
+### The §3.2 guard is a type, not a string scan
+
+The primary invariant is structural: the onboarding state machine's type and
+the `PUT /api/preferences` payload type admit **no** lunch, water, break or
+work-schedule field, so such a question cannot be wired to anything. A
+rendered-text scan runs as a secondary guard, because a schema cannot catch a
+question asked and thrown away.
+
+### Onboarding state on the wire (A1, A2)
+
+D86 makes completion server-side, and D93 makes the service worker depend on
+it, so the extension must be able to read it after a reinstall or on a second
+device. Two resolutions, both inside `API.md` §6 and neither adding an
+endpoint (constraint 4):
+
+- **A1** — `GET /api/preferences` returns `onboardingCompletedAt`
+  (ISO 8601 or `null`).
+- **A2** — `PUT /api/preferences` accepts an explicit
+  `onboardingCompleted: true`. Completion is **never inferred** from an
+  ordinary preference update: a P13 settings edit by a user who never
+  onboarded must not silently switch tracking on. Setting it twice is
+  idempotent — the first timestamp wins and is not overwritten.
+
+### Registration without a session (A3)
+
+Supabase returns a created user and **no tokens** when email confirmation is
+enabled, so `POST /api/auth/register` answers `201 { user }` alone. Onboarding
+then stops and asks the user to verify their email and sign in. Progress is
+already in `chrome.storage` (D92), so signing in resumes at Step 3 rather than
+starting over. This is the P3/P8 carry-forward finally discharged.
+
+### Grandfathering existing accounts (A4)
+
+The migration backfills **every existing user** to
+`onboarding_completed_at = now()`, then leaves the column NULL-by-default for
+everyone created afterwards:
+
+```sql
+alter table public.users add column onboarding_completed_at timestamptz;
+update public.users set onboarding_completed_at = now()
+  where onboarding_completed_at is null;
+```
+
+Without the backfill, D93 would silently switch off tracking for every P8-P11
+beta account the moment P12 shipped. Those users consented in the pre-P12
+world; a new column is not a reason to revoke it. **Newly registered users get
+NULL** and must complete onboarding explicitly — the `update` runs once, at
+migration time, and never again.
+
+### Consent precedes observation (D93)
+
+Tracking starts on completion, never on sign-in. The consequence is deliberate:
+a user who skips onboarding has a working popup, a real account and a Jambu
+that watches nothing at all (A5, confirmed). The popup carries the way back.
+
+### What onboarding collects (A6)
+
+A timezone and four toggles. **`users.name` is deliberately not collected**:
+the persona signs "- Mom", and a grep of `message-templates` and `care-engine`
+finds no consumer for a user's name. Storing it would be personal data with no
+purpose, which CLAUDE.md §9 forbids. The column stays, nullable, for anyone
+registering through the API directly.
+
+---
+
+### Registration has to survive a closed tab (D96)
+
+D85 opens onboarding on install, and D87 put the registration form there. What
+neither said is how someone reaches that form *afterwards*. Until D96 the only
+automatic entry was `chrome.runtime.onInstalled` with `reason === 'install'`,
+and the popup's "Finish setup" button renders only when the user is **already
+signed in** — so a signed-out user with the install tab closed had no route to
+registration at all, and the §15.3 curl workaround that D87 set out to retire
+was quietly still the only way in.
+
+The popup therefore offers "Create account" beside "Sign in". It opens the
+onboarding page rather than asking for credentials itself: one registration
+form, in one place, is easier to keep honest than two.
+
+### P12 manual acceptance checklist
+
+Onboarding is user-visible, so P8/P10 rules apply: **a green `pnpm verify` is
+not sufficient**. Both stale-process failures (P8 CORS, P11 404) began with a
+server older than the code, so before starting:
+
+```bash
+pnpm --filter @jambu/api build && pnpm db:start
+```
+
+Restart the API and confirm the process is newer than your last edit. Then
+`pnpm build:extension` and load `apps/extension/dist` unpacked.
+
+1. **Onboarding opens by itself** on first install, in its own tab (D85).
+2. **The manifest is unchanged** — `chrome://extensions` shows storage, idle,
+   alarms, scripting, notifications and nothing more (constraint 6).
+3. **Create an account from the UI** (D87) and land on the timezone step.
+   Then close the tab, open the popup while signed out, and confirm
+   **"Create account"** reopens onboarding (D96) — registration must not
+   depend on a fresh install.
+4. **No session path (A3)** — enable email confirmation in Supabase, reach
+   registration from the signed-out popup (D96, no reinstall needed), and
+   confirm the page says the account exists and to sign in, rather than
+   hanging. Sign in from the popup and confirm onboarding resumes at Step 3.
+5. **Timezone** is pre-filled from the browser; change it and confirm
+   `GET /api/preferences` reports the new value (D90).
+6. **Check-ins** show water off and the other three on (D7, D89).
+7. **Stopwatch the flow** with defaults — under two minutes, 4 steps, and only
+   an email and password typed (D95).
+8. **Nothing is asked** about lunch time, water or break schedules, work
+   hours, persona or your name (D88, D10, A6).
+9. **Skip mid-flow** (D92): the popup shows "Finish setup", `GET
+   /api/preferences` reports `onboardingCompletedAt: null`, and after browsing
+   for a few minutes `activity_sessions` is still **empty** (D93, A5).
+10. **Resume** from the popup and confirm it reopens at the step you left.
+11. **Finish**, then browse — `activity_sessions` now fills, and
+    `onboardingCompletedAt` is a timestamp.
+12. **Reopen onboarding** manually: a completed user is not re-onboarded (D86).
+13. **DevTools** — no password, token, URL or page content in any log line.
+14. **Keyboard only** — every control reachable, focus ring visible (§19).
+
+Checks 1-3 and 5-12 have automated counterparts in
+`apps/extension/src/onboarding/*.test.*`, `apps/extension/src/popup/App.test.tsx`
+(the D96 entry point), `tracking-gate.test.ts` and
+`apps/api/tests/preferences.integration.test.ts`; check 4 needs a Supabase
+setting only a human can flip, and checks 7, 13 and 14 need a person.
+
+---
+
+## 14.5 Settings, pause, snooze and privacy controls (P13 decisions)
+
+Decisions D97-D107, settled before implementation.
+
+| # | Decision |
+|---|---|
+| **D97** | Settings is a **dedicated options page**, registered via `options_ui` and opened with `chrome.runtime.openOptionsPage()`. A manifest key, not a permission — D3 minimization holds. |
+| **D98** | Pause offers **30 minutes, 1 hour, 2 hours, and rest of day**. The API keeps taking an arbitrary `until`; these are the choices the UI presents. |
+| **D99** | Pause **suppresses interventions but does not stop observation**. Pause and tracking consent stay separate concepts: D93 governs whether Jambu may watch, pause governs whether it may speak. |
+| **D100** | Pausing **immediately removes a displayed Care Card**. This is an explicit pause override to P10's D69; unanswered cards otherwise still persist until answered. |
+| **D101** | "Rest of day" resolves to the user's **configured work-end**, falling back to the **learned** work-end per existing routine-learning semantics (D84, D7). |
+| **D102** | Snooze creation stays **tied to an intervention response**. Settings can view and clear active snoozes; it cannot mint arbitrary ones. |
+| **D103** | Disabling an intervention type **clears its active snooze**. Re-enabling does not recreate an intervention. |
+| **D104** | Deletion is **asynchronous**. `GET /api/user/deletion-request/:id` polling is retained **for activity scope**; account deletion is confirmed by its successful `202` instead (see the resolution below). |
+| **D105** | Export is a **versioned JSON download** with a documented schema and a bounded response. It carries no URLs or page content, because none is collected (§9). |
+| **D106** | Destructive actions require **typed confirmation**: `DELETE_ACTIVITY` or `DELETE_ACCOUNT`. |
+| **D107** | After account deletion the extension **clears access and refresh credentials and the onboarding cache**, returns to the signed-out state, and shows an explicit completion message — triggered by the `202`, not by a polled status. |
+
+### The mockups are the visual source of truth
+
+The Jambu 3D mockups — onboarding, popup states, Lunch, Break, Hydration,
+End-of-Day, responses, pause and settings — govern **visual hierarchy,
+illustration style, card treatment, spacing and interaction presentation**. No
+alternative visual language may be invented alongside them.
+
+Behaviour is governed by this document and the state machines it describes.
+Where a mockup and a decision appear to disagree about *behaviour*, the
+decision wins and the disagreement is raised rather than resolved silently.
+
+**Precondition for P13 implementation:** the mockup assets are not yet in the
+repository. They must be added (for example under `docs/design/`) and
+referenced here before UI work begins; until then only the API layer of P13 is
+implementable.
+
+### Pause silences, it does not blind (D99)
+
+Pausing is about interruption, not surveillance. Jambu keeps observing so that
+resuming does not start from an empty history and the learned routines stay
+current — but it says nothing at all while paused. The control that stops
+observation is onboarding consent (D93), and the control that removes what was
+observed is deletion (§11). Three separate promises, three separate controls,
+so that none of them silently stands in for another.
+
+### Why pause takes the card away (D100)
+
+D69 says an unanswered card persists: no auto-dismiss, no fabricated response.
+That protects a card the user has not dealt with yet. Pause is different — the
+user has just said "not now", and leaving the card on screen would contradict
+the very instruction that produced it. §42 requires pausing to silence Jambu
+*immediately*, and a card already on the page is Jambu still talking.
+
+The removal carries no response value. The intervention is expired server-side
+through the existing `expireStale` path, exactly as a timeout would.
+
+### Snooze is earned, not scheduled (D102, D103)
+
+A snooze exists because the user answered a card with "remind me later". It is
+a reaction to a moment, not a schedule — and CLAUDE.md §3.2 is precisely about
+not making people schedule their own care. Settings therefore shows active
+snoozes and lets them be cleared, but offers no way to create one.
+
+D103 follows from the same reading: turning a type off is the stronger, more
+deliberate statement, so it clears the weaker temporary one. Turning it back
+on restores eligibility, never a pending intervention.
+
+### Account deletion is confirmed by its acceptance (D104 + D107)
+
+Implementation surfaced a conflict the two decisions could not both survive.
+`GET /api/user/deletion-request/:id` is authenticated, and completing an
+account deletion destroys the auth user — so the token needed to poll dies
+with the account it is asking about. Proven rather than assumed: the deletion
+reached `completed` with `auth users remaining: 0`, and the same token then
+got `401` from the status route.
+
+**Resolved:** a successful `202` **is** the confirmation for account scope.
+The client clears its credentials and shows the completion message on that
+response, and never polls afterwards. Polling stays exactly as specified for
+activity scope, where the account survives and the token still works.
+
+Two tempting fixes were rejected: an unauthenticated status endpoint (it would
+disclose deletion state for any guessed id, and weakening auth on a route that
+reports deletion status is not a change to make casually) and a short-lived
+receipt token (a second credential type, invented to observe something the
+`202` already told us). Neither buys anything the acceptance response does not.
+
+The server still writes the audit row and still moves it to `completed`. What
+changed is only who is expected to read it: operators, not the departing user.
+
+### Where the mockups and the decisions differ
+
+The mockups in `docs/design/` are the visual source of truth: hierarchy,
+illustration style, card treatment, spacing and interaction presentation all
+follow the board. Behaviour follows the decisions, and six places needed that
+rule applied. Each is a **behavioural** difference, not a visual one — the
+board's look is reproduced in every case.
+
+| Board | Implemented | Why |
+|---|---|---|
+| Settings lists **Posture reminders** | Omitted | Not an MVP intervention type. CLAUDE.md §2 lists four and says not to expand the catalogue without approval; there is no enum value, scoring rule or message template for posture, so the toggle would control nothing. |
+| Settings **omits Lunch** | Included | Lunch is the Mom Moment (§5). Leaving it out would hide the product's headline behaviour behind no control at all. |
+| Pause offers **"Until end of day / 1h / 2h / Custom time"** | 30 minutes, 1 hour, 2 hours, rest of day | D98 approved those four. "Custom time" is also the scheduling chore §3.2 avoids. |
+| Popup has **"Take a break now"** | Omitted | No approved contract creates an intervention on demand; `POST /api/interventions` only creates one when warranted (P7). |
+| Care Card reads **"Take a 5 minute break" / "Not now"** | Unchanged from P10 | The card's actions are the §18 response values, settled in P10 (D68-D75). Redesigning it is outside P13. |
+| Onboarding screen is **restyled** | Unchanged from P12 | P12 is accepted and closed. Restyling it is a separate, reviewable change. |
+
+Three board details are reproduced exactly because they match the decisions
+outright: the paused state says activity is still tracked (D99), export warns
+about the 10,000-record cap (D105), and both delete screens require the phrase
+typed (D106).
+
+### P13 manual acceptance checklist
+
+Rebuild and restart the API first, and confirm the running process is newer
+than the last edit — both previous stale-process failures (P8 CORS, P11 404)
+began exactly there.
+
+```bash
+pnpm --filter @jambu/api build && pnpm build:extension
+```
+
+1. **Settings opens** from the popup as its own options page (D97).
+2. **Manifest unchanged** apart from `options_ui` — permissions still storage,
+   idle, alarms, scripting, notifications (D3).
+3. **Pause offers exactly four choices**: 30 minutes, 1 hour, 2 hours, rest of
+   day (D98).
+4. **Pause removes a live card** — trigger an intervention, pause while it is
+   on screen, and watch it disappear (D100).
+5. **Paused Jambu stays quiet** — browse for a stretch and confirm no new card.
+6. **Paused Jambu keeps observing** — `activity_sessions` still grows while
+   paused (D99). This is the check that distinguishes pause from consent.
+7. **Rest of day** ends at the configured work-end, or the learned one where
+   routine learning supplies it (D101).
+8. **Resume** restores normal behaviour; pausing and resuming twice changes
+   nothing further (idempotent).
+9. **Disable lunch** and confirm only lunch goes quiet.
+10. **Disabling a type clears its snooze** — snooze lunch from a card, disable
+    lunch in settings, and confirm the snooze is gone (D103).
+11. **Snoozes are viewable and clearable**, and settings offers no way to
+    create one (D102).
+12. **Export** downloads versioned JSON; read it by eye and confirm no URL or
+    page content anywhere (D105).
+13. **Typed confirmation** — `DELETE_ACTIVITY` must be typed exactly; a near
+    miss is refused (D106).
+14. **Activity deletion** removes activity, routines and interventions while
+    the account, preferences and pause state survive.
+15. **Activity deletion status polls** from `pending` to `completed` (D104).
+    This is activity scope only — account scope is confirmed by its `202`.
+16. **Account deletion** removes every row, and the extension returns to
+    signed-out with credentials and the onboarding cache cleared and a plain
+    completion message shown (D107) — triggered by the `202`, with **no**
+    polling attempted afterwards.
+17. **DevTools** — no token, URL or page content in any log line.
+18. **Keyboard only** — every settings control reachable, focus ring visible.
+19. **Visual fidelity** — compare the options page, popup, pause modal and the
+    export and delete dialogs against `docs/design/`. This is the one P13
+    acceptance item no automated test can stand in for.
+
+Checks 3, 8-11 and 13-16 have automated counterparts; checks 1, 2, 4, 6, 12,
+17 and 18 need a person, and check 6 is the one worth doing carefully — it is
+the only place the D93/D99 distinction is visible.
+
+---
+
 ---
 
 ## 15. Beta Setup / Operational Notes
@@ -893,18 +1303,21 @@ than silent. Checking `node --env-file=.env -e 'console.log(...)'` proves only
 that the *file* is correct — it spawns a fresh process and says nothing about
 the one already listening.
 
-### 15.3 No registration UI before P12
+### 15.3 Creating an account
 
-P8 ships **sign-in only** (decision D58); registration and onboarding belong to
-P12. Until then, beta and test accounts are created through the API:
+**Registration is a UI flow as of P12.** Install the extension and onboarding
+opens by itself (D85); if that tab has been closed, open the popup while
+signed out and click **"Create account"** (D96). Both routes lead to the same
+form on the onboarding page — there is no second one.
 
-```bash
-curl -s -X POST http://127.0.0.1:3000/api/auth/register \
-  -H 'content-type: application/json' \
-  -d '{"email":"tester@example.com","password":"<password>","timezone":"Asia/Kolkata"}'
-```
+P8 shipped sign-in only (D58) and this section used to carry a `curl` recipe
+against `/api/auth/register` as the way to make beta accounts. That workaround
+is **retired**: D87 replaced it with the real form, and D96 made the form
+reachable without reinstalling. The endpoint still exists and still accepts the
+same body, so scripted fixtures may call it directly — but it is no longer how
+a person creates an account, and it should not be offered to a tester as one.
 
-Note also that Supabase may return a created user and **no session** when email
-confirmation is enabled; the response is then `201` with `{ user }` and no
-tokens. Handling that in the client is a P12 concern, recorded against P8 in
-the implementation plan.
+The client handles a registration that returns **no session** (email
+confirmation enabled — `201 { user }` with no tokens): onboarding stops, asks
+the user to confirm their email and sign in, then resumes at the timezone step
+from the progress in `chrome.storage`. See resolution A3 in §14.4.

@@ -23,7 +23,7 @@ const email = z.string().trim().toLowerCase().email('A valid email is required.'
  * IANA timezone, validated against the runtime's own database rather than a
  * hand-maintained list (CLAUDE.md §28).
  */
-const timezone = z
+export const timezone = z
   .string()
   .min(1)
   .refine((value) => {

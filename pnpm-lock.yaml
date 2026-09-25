@@ -223,6 +223,9 @@ importers:
       '@jambu/message-templates':
         specifier: workspace:*
         version: link:../../packages/message-templates
+      '@jambu/routine-learning':
+        specifier: workspace:*
+        version: link:../../packages/routine-learning
       '@jambu/shared-types':
         specifier: workspace:*
         version: link:../../packages/shared-types
@@ -285,7 +288,11 @@ importers:
         specifier: workspace:*
         version: link:../shared-types
 
-  packages/routine-learning: {}
+  packages/routine-learning:
+    dependencies:
+      '@jambu/shared-types':
+        specifier: workspace:*
+        version: link:../shared-types
 
   packages/shared-types: {}
 
