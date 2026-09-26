@@ -13,6 +13,7 @@ import { ApiError } from './errors.js';
 import { createSupabaseClients, type SupabaseClients } from './plugins/supabase.js';
 import { buildAuthenticate } from './auth/authenticate.js';
 import { registerActivityRoutes } from './routes/activity/session.js';
+import { registerAuthConfirmedRoute } from './routes/auth-confirmed.js';
 import { registerAuthRoutes } from './routes/auth.js';
 import { registerInterventionRoutes } from './routes/interventions/index.js';
 import { registerPauseRoutes } from './routes/pause/index.js';
@@ -140,6 +141,11 @@ export async function buildApp(options: BuildAppOptions): Promise<FastifyInstanc
 
   // --- Routes ---------------------------------------------------------------
   registerHealthRoute(app, config.version);
+
+  // The email-confirmation landing page. Unauthenticated and outside `/api`
+  // because it is opened by a person clicking a link in their mail client, not
+  // by the extension.
+  registerAuthConfirmedRoute(app);
 
   // Auth routes carry their own, much tighter budget via per-route config.
   registerAuthRoutes(app, clients, config.authRateLimitMax);

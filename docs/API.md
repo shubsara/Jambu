@@ -86,6 +86,19 @@ Creates the Supabase Auth user, the `users` row, and default
 
 Tokens are never logged (§31).
 
+### `GET /auth/confirmed`
+
+Unauthenticated. Returns `200` with an HTML page — the only HTML the API
+serves — for Supabase to land on after a user clicks the confirmation link in
+their email. Not under `/api`, because it is opened by a person in a mail
+client rather than by the extension.
+
+It is **not** an auth callback. Confirming an email does not start a session
+(resolution A3): the page says the account is ready and sends the user back to
+the extension to sign in. Supabase leaves `#access_token=...` on the URL; a
+fragment never reaches a server, and the page carries no JavaScript, so
+nothing reads it. `Content-Security-Policy: default-src 'none'` enforces that.
+
 ---
 
 ## 4. Activity
@@ -444,6 +457,7 @@ user. Polling is unchanged for activity scope, where the account survives.
 | POST | `/api/auth/register` | P3 | §23 |
 | POST | `/api/auth/login` | P3 | §23 |
 | POST | `/api/auth/refresh` | P3 | §23 |
+| GET | `/auth/confirmed` | P13 | Supabase email confirmation |
 | POST | `/api/activity/session` | P4 | §23 |
 | GET | `/api/user/state` | P5 | §23 |
 | GET | `/api/preferences` | P12 | §23 |
