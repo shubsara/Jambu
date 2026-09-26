@@ -85,7 +85,11 @@ export interface AppConfig {
  * error names the missing variables but never their values.
  */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
-  const parsed = envSchema.safeParse(env);
+  const environment = {
+    ...env,
+    API_PORT: env.PORT ?? env.API_PORT,
+  };
+  const parsed = envSchema.safeParse(environment);
   if (!parsed.success) {
     const fields = parsed.error.issues.map((issue) => issue.path.join('.')).join(', ');
     throw new Error(`Invalid environment configuration: ${fields}`);

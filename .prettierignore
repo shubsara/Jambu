@@ -11,3 +11,4 @@ CLAUDE.md
 # Documentation is hand-formatted (tables, ASCII diagrams, deliberate wrapping).
 # Prettier's Markdown printer would reflow it and damage the diagrams.
 *.md
+supabase/.temp/
