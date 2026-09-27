@@ -24,7 +24,8 @@ const manifest = JSON.parse(
   permissions?: string[];
   host_permissions?: string[];
   background?: { service_worker?: string; type?: string };
-  action?: { default_popup?: string };
+  icons?: Record<string, string>;
+  action?: { default_popup?: string; default_icon?: Record<string, string> };
   options_ui?: { page?: string; open_in_tab?: boolean };
   content_scripts?: unknown[];
   web_accessible_resources?: unknown[];
@@ -137,5 +138,75 @@ describe('manifest validity', () => {
     // script, never fetched by the page - so nothing needs exposing, and no
     // page can detect the extension by probing for its files.
     expect(manifest.web_accessible_resources).toBeUndefined();
+  });
+});
+
+/**
+ * Extension icons (decisions D108-D110).
+ *
+ * Before these existed the manifest declared no icon at all and Chrome drew a
+ * generated grey placeholder. The checks mirror the `options_ui` guards above,
+ * and for the same reason: a manifest can name a file the build never emits,
+ * or name a 16 that is really a 128, and Chrome says nothing either way.
+ */
+describe('icons (decisions D108-D110)', () => {
+  const SIZES = ['16', '32', '48', '128'] as const;
+
+  /** Width and height straight out of the PNG IHDR chunk. */
+  function pngSize(file: string): { width: number; height: number } {
+    const bytes = readFileSync(file);
+    return { width: bytes.readUInt32BE(16), height: bytes.readUInt32BE(20) };
+  }
+
+  function sourceOf(path: string): string {
+    return fileURLToPath(new URL(`../public/${path}`, import.meta.url));
+  }
+
+  it('declares every size Chrome asks for', () => {
+    expect(Object.keys(manifest.icons ?? {})).toEqual([...SIZES]);
+  });
+
+  it('gives the toolbar action the same set', () => {
+    // `icons` and `action.default_icon` are not interchangeable: the first is
+    // the installed extension, the second is the button in the toolbar.
+    expect(Object.keys(manifest.action?.default_icon ?? {})).toEqual([...SIZES]);
+    expect(manifest.action?.default_icon).toEqual(manifest.icons);
+  });
+
+  it('points at files that actually exist', () => {
+    for (const size of SIZES) {
+      expect(existsSync(sourceOf(manifest.icons?.[size] ?? ''))).toBe(true);
+    }
+  });
+
+  it('ships a PNG of the size it claims', () => {
+    for (const size of SIZES) {
+      const { width, height } = pngSize(sourceOf(manifest.icons?.[size] ?? ''));
+      expect({ size, width, height }).toEqual({
+        size,
+        width: Number(size),
+        height: Number(size),
+      });
+    }
+  });
+
+  it('keeps the transparent corners (decision D108)', () => {
+    // Chrome does not mask extension icons. Without an alpha channel the
+    // rounded corners render as opaque notches on a dark theme.
+    for (const size of SIZES) {
+      const bytes = readFileSync(sourceOf(manifest.icons?.[size] ?? ''));
+      // IHDR colour type, byte 25: 6 = truecolour with alpha.
+      expect(bytes.readUInt8(25)).toBe(6);
+    }
+  });
+
+  it('adds icons without adding a permission', () => {
+    expect(manifest.permissions).toEqual([
+      'storage',
+      'idle',
+      'alarms',
+      'scripting',
+      'notifications',
+    ]);
   });
 });
