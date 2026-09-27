@@ -26,6 +26,7 @@
     "typecheck:db": "tsc --noEmit -p database/tsconfig.json",
     "test:api": "node scripts/with-supabase-env.mjs vitest run --config vitest.api.config.ts",
     "build:extension": "vite build --config apps/extension/vite.config.ts",
+    "build:extension:prod": "VITE_JAMBU_API_BASE_URL=https://jambu.onrender.com pnpm run build:extension",
     "check:extension": "node scripts/check-extension-bundle.mjs",
     "typecheck:ext": "tsc --noEmit -p apps/extension/tsconfig.json"
   },

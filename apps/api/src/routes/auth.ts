@@ -21,6 +21,20 @@ import {
   registrationFailure,
 } from '../services/registration.js';
 
+/**
+ * Where the confirmation link in the sign-up email lands.
+ *
+ * Supplied explicitly because Supabase otherwise falls back to the project's
+ * Site URL — `http://localhost:3000` by default, which is nobody's machine
+ * once the API is deployed. The target is `GET /auth/confirmed`, a static page
+ * that tells the user their account is ready and sends them back to the
+ * extension to sign in.
+ *
+ * It is deliberately NOT a callback: confirming an email starts no session
+ * (resolution A3), and the page reads nothing from the URL.
+ */
+const EMAIL_CONFIRMATION_REDIRECT = 'https://jambu.onrender.com/auth/confirmed';
+
 interface SessionLike {
   readonly access_token: string;
   readonly refresh_token: string;
@@ -69,6 +83,7 @@ export function registerAuthRoutes(
     const { data, error } = await clients.auth.auth.signUp({
       email: input.email,
       password: input.password,
+      options: { emailRedirectTo: EMAIL_CONFIRMATION_REDIRECT },
     });
 
     // Supabase may return a user with no session when confirmations are on.

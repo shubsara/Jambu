@@ -18,6 +18,11 @@ import { defineConfig } from 'vite';
 export default defineConfig({
   root: resolve(__dirname, 'src'),
   publicDir: resolve(__dirname, 'public'),
+  // Vite resolves `.env` against `root`, which here is `src/` — so the
+  // repo-root `.env` that `.env.example` documents was never being read, and
+  // `VITE_JAMBU_API_BASE_URL` silently had no effect from that file. Point it
+  // at the workspace root so the documented pattern actually works.
+  envDir: resolve(__dirname, '../..'),
   plugins: [react(), tailwindcss()],
   build: {
     outDir: resolve(__dirname, 'dist'),
