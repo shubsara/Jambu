@@ -6,9 +6,14 @@
  * `users`. That split is a storage detail, so this module hides it and the
  * client sees one object (decisions D90, A1).
  */
-import type { InterventionType, PreferencesView } from '@jambu/shared-types';
+import type {
+  InterventionType,
+  PreferenceFieldName,
+  PreferencesView,
+} from '@jambu/shared-types';
 import type { SupabaseClient } from '@supabase/supabase-js';
 
+import { emit } from '../lib/analytics.js';
 import { ApiError } from '../errors.js';
 import type { UpdatePreferencesRequest } from '../schemas/preferences.js';
 import { clearSnooze } from './snooze.js';
@@ -90,6 +95,24 @@ export async function readPreferences(
  * partial-success response, because a client that got one could not tell what
  * had actually been stored.
  */
+/**
+ * Database column -> D113 `changedFields` name.
+ *
+ * Explicit rather than a camel-case transform: the map is the allowlist. A
+ * column added later is simply absent here and is reported as nothing, which
+ * is the safe direction - a new column cannot leak into analytics by default.
+ */
+const COLUMN_TO_PREFERENCE_FIELD: Readonly<Record<string, PreferenceFieldName>> = {
+  work_start: 'workStart',
+  work_end: 'workEnd',
+  lunch_enabled: 'lunchEnabled',
+  break_enabled: 'breakEnabled',
+  hydration_enabled: 'hydrationEnabled',
+  end_day_enabled: 'endDayEnabled',
+  persona: 'persona',
+  timezone: 'timezone',
+};
+
 export async function updatePreferences(
   admin: SupabaseClient,
   userId: string,
@@ -132,7 +155,35 @@ export async function updatePreferences(
   }
 
   if (update.onboardingCompleted === true) {
-    await markOnboardingComplete(admin, userId, now);
+    const transitioned = await markOnboardingComplete(admin, userId, now);
+    if (transitioned) {
+      // Only on the real incomplete -> complete transition (resolution A2).
+      emit({
+        event: 'onboarding_completed',
+        occurredAt: now.toISOString(),
+        userId,
+      });
+    }
+  }
+
+  // Key names only, never values: a `workStart` value would disclose the
+  // user's daily schedule, and decision D113 keeps values out of analytics
+  // entirely. Derived from the patches actually applied above, so a no-op
+  // field in the request does not report itself as a change.
+  const changedFields = [
+    ...Object.keys(preferencePatch).filter((key) => key !== 'updated_at'),
+    ...Object.keys(userPatch).filter((key) => key !== 'updated_at'),
+  ]
+    .map((column) => COLUMN_TO_PREFERENCE_FIELD[column])
+    .filter((field): field is PreferenceFieldName => field !== undefined);
+
+  if (changedFields.length > 0) {
+    emit({
+      event: 'settings_changed',
+      occurredAt: now.toISOString(),
+      userId,
+      changedFields,
+    });
   }
 
   await clearSnoozesForDisabledTypes(admin, userId, update);
@@ -154,16 +205,23 @@ async function markOnboardingComplete(
   admin: SupabaseClient,
   userId: string,
   now: Date,
-): Promise<void> {
-  const { error } = await admin
+): Promise<boolean> {
+  const { data, error } = await admin
     .from('users')
     .update({ onboarding_completed_at: now.toISOString(), updated_at: now.toISOString() })
     .eq('id', userId)
-    .is('onboarding_completed_at', null);
+    .is('onboarding_completed_at', null)
+    // `.select()` is what turns the existing idempotence into an observable
+    // fact. Without it the update cannot say whether it stamped a row or
+    // matched none, and a repeated completion request would emit a duplicate
+    // `onboarding_completed`. Rows returned === the transition happened here.
+    .select('id');
 
   if (error !== null) {
     throw new ApiError('INTERNAL', 'Onboarding could not be completed.');
   }
+
+  return (data?.length ?? 0) > 0;
 }
 
 /**

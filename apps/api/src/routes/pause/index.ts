@@ -8,6 +8,7 @@
 import type { FastifyInstance, FastifyRequest, onRequestHookHandler } from 'fastify';
 
 import { requireUserId } from '../../auth/authorize.js';
+import { emit } from '../../lib/analytics.js';
 import { ApiError } from '../../errors.js';
 import type { SupabaseClients } from '../../plugins/supabase.js';
 import { pauseRequestSchema } from '../../schemas/control.js';
@@ -52,13 +53,33 @@ export function registerPauseRoutes(
     }
 
     const until = parsed.data.until === undefined ? null : new Date(parsed.data.until);
-    return await reply
-      .code(200)
-      .send(await startPause(clients.admin, userId, until, new Date()));
+    const now = new Date();
+    const state = await startPause(clients.admin, userId, until, now);
+
+    // Minutes derived from the request's own deadline, so the existing pause
+    // choices (30m / 1h / 2h) report themselves. "Rest of day" and an
+    // indefinite pause both send no deadline, and are recorded as null rather
+    // than as a fabricated duration.
+    emit({
+      event: 'jambu_paused',
+      occurredAt: now.toISOString(),
+      userId,
+      pauseDurationMinutes:
+        until === null
+          ? null
+          : Math.max(0, Math.round((until.getTime() - now.getTime()) / 60_000)),
+    });
+
+    return await reply.code(200).send(state);
   });
 
   app.delete('/api/pause', guarded, async (request, reply) => {
     const userId = requireUserId(request.authenticatedUser);
-    return await reply.code(200).send(await endPause(clients.admin, userId, new Date()));
+    const now = new Date();
+    const state = await endPause(clients.admin, userId, now);
+
+    emit({ event: 'jambu_resumed', occurredAt: now.toISOString(), userId });
+
+    return await reply.code(200).send(state);
   });
 }

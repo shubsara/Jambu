@@ -15,7 +15,9 @@
  *     card records `expired`, never a response the user did not give.
  */
 import type { SupabaseClient } from '@supabase/supabase-js';
+import type { InterventionType } from '@jambu/shared-types';
 
+import { emit } from '../lib/analytics.js';
 import { ApiError } from '../errors.js';
 import { expireStale } from './intervention.js';
 
@@ -83,14 +85,27 @@ async function expireLiveIntervention(
   userId: string,
   now: Date,
 ): Promise<void> {
-  const { error } = await admin
+  const { data, error } = await admin
     .from('interventions')
     .update({ response: 'expired', responded_at: now.toISOString() })
     .eq('user_id', userId)
-    .is('response', null);
+    .is('response', null)
+    // Added so this path can report per-intervention too. D100 expiry is a
+    // second, independent route to `expired`; counting only the sweep would
+    // silently undercount every card a pause took off the screen.
+    .select('id, type');
 
   if (error !== null) {
     throw new ApiError('INTERNAL', 'Live interventions could not be cleared.');
+  }
+
+  for (const row of (data ?? []) as { id: string; type: InterventionType }[]) {
+    emit({
+      event: 'intervention_expired',
+      occurredAt: now.toISOString(),
+      userId,
+      interventionType: row.type,
+    });
   }
 }
 

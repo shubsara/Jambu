@@ -13,6 +13,7 @@
  * into runs. Re-implementing it in the tracker would create a second
  * definition that could drift.
  */
+import { emitForCurrentUser } from '../lib/analytics.js';
 import { MAX_ACTIVE_SECONDS_PER_SESSION } from '@jambu/shared-types';
 
 import { appendSession, type BufferedSession } from './activity-buffer.js';
@@ -100,6 +101,15 @@ export async function closeSession(now: Date): Promise<boolean> {
   };
 
   await appendSession(session);
+
+  // Duration only. The session's `domain` is deliberately NOT carried into
+  // the payload (§9, decision D113) - Jambu measures how long someone worked,
+  // never what they worked on.
+  emitForCurrentUser({
+    event: 'activity_session_completed',
+    occurredAt: now.toISOString(),
+    activeSeconds,
+  });
   return true;
 }
 
@@ -109,6 +119,12 @@ export async function openSession(domain: string | null, now: Date): Promise<voi
     clientSessionId: newId(),
     startedAt: now.toISOString(),
     domain,
+  });
+
+  // `domain` is in scope here and is deliberately not emitted (§9, D113).
+  emitForCurrentUser({
+    event: 'activity_session_started',
+    occurredAt: now.toISOString(),
   });
 }
 

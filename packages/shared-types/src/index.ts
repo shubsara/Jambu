@@ -7,6 +7,7 @@
  */
 
 export * from './activity.js';
+export * from './analytics.js';
 export * from './care.js';
 export * from './constants.js';
 export * from './intervention.js';

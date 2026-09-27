@@ -20,6 +20,7 @@ import type {
   InterventionType,
 } from '@jambu/shared-types';
 
+import { emit } from '../lib/analytics.js';
 import { ApiError } from '../errors.js';
 import { assembleCareContext } from './care-context.js';
 
@@ -76,12 +77,24 @@ export async function expireStale(
     .eq('user_id', userId)
     .is('response', null)
     .lte('expires_at', now.toISOString())
-    .select('id');
+    // `type` joins the existing `id` selection so the sweep can report one
+    // §29 event per expired intervention rather than a single bulk figure.
+    .select('id, type');
 
   if (error !== null) {
     throw new ApiError('INTERNAL', 'Interventions could not be updated.');
   }
-  return data?.length ?? 0;
+
+  const expired = (data ?? []) as { id: string; type: InterventionType }[];
+  for (const row of expired) {
+    emit({
+      event: 'intervention_expired',
+      occurredAt: now.toISOString(),
+      userId,
+      interventionType: row.type,
+    });
+  }
+  return expired.length;
 }
 
 /** The one unanswered, unexpired intervention, if any. */
@@ -220,6 +233,17 @@ export async function createIfWarranted(
     throw new ApiError('INTERNAL', 'The intervention could not be created.');
   }
 
+  // Decision D111: this is "created / delivery attempted", not an impression.
+  // `shown_at` above keeps its D70 creation-time meaning and is unchanged.
+  emit({
+    event: 'intervention_shown',
+    occurredAt: now.toISOString(),
+    userId,
+    interventionType: type,
+    trigger: options.trigger,
+    score: decision.score,
+  });
+
   return { status: 'created', intervention: toView(data as InterventionRow) };
 }
 
@@ -291,6 +315,28 @@ export async function recordResponse(
       status: 'already-answered',
       intervention: toView(settled.data as InterventionRow),
     };
+  }
+
+  // The transition happened in *this* request - `updated === null` above is
+  // the concurrent-submission and repeat-submission path, and returns before
+  // reaching here. That is what makes this once per occurrence.
+  //
+  // `not_yet` is deliberately unmapped: CLAUDE.md §29 names no event for it,
+  // and P14 does not add one. `expired` never arrives here either - the
+  // request schema rejects it, because expiry is the server's to declare.
+  const OUTCOME_EVENTS = {
+    confirmed: 'intervention_confirmed',
+    snoozed: 'intervention_snoozed',
+    dismissed: 'intervention_dismissed',
+  } as const;
+  const outcome = OUTCOME_EVENTS[response as keyof typeof OUTCOME_EVENTS];
+  if (outcome !== undefined) {
+    emit({
+      event: outcome,
+      occurredAt: respondedAt.toISOString(),
+      userId: actorId,
+      interventionType: row.type as InterventionType,
+    });
   }
 
   if (response === 'snoozed') {

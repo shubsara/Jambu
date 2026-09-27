@@ -12,6 +12,7 @@
 import { useEffect, useState, type ReactElement } from 'react';
 
 import { SessionExpiredError } from '../lib/api-client.js';
+import { emitForCurrentUser } from '../lib/analytics.js';
 import { submitOnboarding } from '../lib/preferences.js';
 import { registerAccount } from '../lib/register.js';
 import {
@@ -64,6 +65,15 @@ export function App(): ReactElement {
   // Resume where the user left off (D92). A returning user who already has a
   // session skips the account step — this is also the A3 resume path.
   useEffect(() => {
+    // Decision D114: the onboarding UI opening *is* the start. A first-time
+    // user has no account yet - the account step is second - so `userId`
+    // resolves to null here, which D113 accepts rather than papering over
+    // with an anonymous id. The funnel is therefore population-level.
+    emitForCurrentUser({
+      event: 'onboarding_started',
+      occurredAt: new Date().toISOString(),
+    });
+
     void (async () => {
       const progress = await readOnboardingProgress();
       const restored = fromProgress(progress, detectTimezone());
